@@ -185,55 +185,58 @@ const RAW = [
 
 export const CATALOG = RAW.map(([name, cat, unit, ...aliases]) => ({ name, cat, unit, aliases }));
 
-// Dishes for the meal plan. `slots`: b = breakfast, l = lunch, d = dinner.
-// `need` lists catalog item names, used by "Get missing ingredients".
-export const DISHES = [
-  { name: 'Puttu & kadala curry', slots: 'b', need: ['Puttu podi', 'Black chana', 'Coconut', 'Onion', 'Coconut oil'] },
-  { name: 'Appam & stew', slots: 'bd', need: ['Appam podi', 'Coconut', 'Potato', 'Onion', 'Ginger', 'Green chilli'] },
-  { name: 'Appam & egg curry', slots: 'bd', need: ['Appam podi', 'Eggs', 'Onion', 'Tomato', 'Coconut'] },
-  { name: 'Idiyappam & egg curry', slots: 'bd', need: ['Idiyappam podi', 'Eggs', 'Onion', 'Tomato', 'Coconut'] },
-  { name: 'Dosa & chutney', slots: 'bd', need: ['Dosa batter', 'Coconut', 'Green chilli', 'Small onion'] },
-  { name: 'Idli & sambar', slots: 'b', need: ['Dosa batter', 'Toor dal', 'Sambar powder', 'Tomato', 'Small onion', 'Tamarind'] },
-  { name: 'Upma', slots: 'b', need: ['Rava', 'Onion', 'Green chilli', 'Mustard seeds', 'Curry leaves'] },
-  { name: 'Poha', slots: 'b', need: ['Poha', 'Onion', 'Green chilli', 'Peas'] },
-  { name: 'Chapati & kurma', slots: 'bd', need: ['Wheat flour', 'Potato', 'Carrot', 'Peas', 'Coconut'] },
-  { name: 'Bread & omelette', slots: 'b', need: ['Bread', 'Eggs', 'Onion'] },
-  { name: 'Oats porridge', slots: 'b', need: ['Oats', 'Milk'] },
-  { name: 'Kappa & meen curry', slots: 'ld', need: ['Tapioca', 'Fish', 'Tamarind', 'Chilli powder', 'Coconut oil'] },
-  { name: 'Rice & sambar', slots: 'l', need: ['Matta rice', 'Toor dal', 'Sambar powder', 'Drumstick', 'Tomato', 'Small onion', 'Tamarind'] },
-  { name: 'Rice, avial & thoran', slots: 'l', need: ['Matta rice', 'Raw banana', 'Yam', 'Carrot', 'Beans', 'Coconut', 'Curd', 'Cabbage'] },
-  { name: 'Rice & fish curry', slots: 'l', need: ['Matta rice', 'Fish', 'Tamarind', 'Chilli powder', 'Coconut', 'Coconut oil'] },
-  { name: 'Rice & fish fry', slots: 'l', need: ['Matta rice', 'Sardine', 'Chilli powder', 'Turmeric powder', 'Coconut oil'] },
-  { name: 'Rice & moru curry', slots: 'l', need: ['Matta rice', 'Buttermilk', 'Turmeric powder', 'Green chilli'] },
-  { name: 'Rice & parippu curry', slots: 'l', need: ['Matta rice', 'Moong dal', 'Coconut', 'Ghee', 'Pappadam'] },
-  { name: 'Rice & chicken curry', slots: 'ld', need: ['Matta rice', 'Chicken', 'Onion', 'Tomato', 'Chicken masala', 'Coconut'] },
-  { name: 'Rice & rasam', slots: 'l', need: ['Rice', 'Tomato', 'Tamarind', 'Rasam powder', 'Garlic'] },
-  { name: 'Kanji & payar', slots: 'ld', need: ['Matta rice', 'Green gram', 'Coconut', 'Pickle', 'Pappadam'] },
-  { name: 'Curd rice', slots: 'ld', need: ['Rice', 'Curd', 'Green chilli', 'Mustard seeds'] },
-  { name: 'Lemon rice', slots: 'l', need: ['Rice', 'Lemon', 'Mustard seeds', 'Curry leaves'] },
-  { name: 'Chicken biryani', slots: 'ld', need: ['Basmati rice', 'Chicken', 'Onion', 'Tomato', 'Curd', 'Ghee', 'Garam masala'] },
-  { name: 'Veg biryani', slots: 'ld', need: ['Basmati rice', 'Carrot', 'Beans', 'Peas', 'Onion', 'Curd', 'Ghee'] },
-  { name: 'Ghee rice & chicken', slots: 'ld', need: ['Basmati rice', 'Ghee', 'Chicken', 'Onion'] },
-  { name: 'Porotta & beef fry', slots: 'd', need: ['Maida', 'Beef', 'Onion', 'Coconut', 'Pepper', 'Coconut oil'] },
-  { name: 'Chapati & chicken curry', slots: 'd', need: ['Wheat flour', 'Chicken', 'Onion', 'Tomato', 'Chicken masala'] },
-  { name: 'Chapati & dal', slots: 'd', need: ['Wheat flour', 'Toor dal', 'Tomato', 'Onion', 'Cumin'] },
-  { name: 'Chapati & paneer', slots: 'd', need: ['Wheat flour', 'Paneer', 'Onion', 'Tomato', 'Capsicum'] },
-  { name: 'Chapati & chana masala', slots: 'd', need: ['Wheat flour', 'Chickpeas', 'Onion', 'Tomato', 'Garam masala'] },
-  { name: 'Rajma chawal', slots: 'ld', need: ['Rajma', 'Rice', 'Onion', 'Tomato'] },
-  { name: 'Aloo paratha', slots: 'bd', need: ['Wheat flour', 'Potato', 'Curd', 'Butter'] },
-  { name: 'Dal khichdi', slots: 'ld', need: ['Rice', 'Moong dal', 'Ghee', 'Cumin'] },
-  { name: 'Fried rice', slots: 'ld', need: ['Basmati rice', 'Carrot', 'Beans', 'Cabbage', 'Eggs'] },
-  { name: 'Noodles', slots: 'd', need: ['Noodles', 'Carrot', 'Cabbage', 'Capsicum'] },
-  { name: 'Egg roast', slots: 'ld', need: ['Eggs', 'Onion', 'Tomato', 'Coconut oil'] },
-  { name: 'Prawns roast', slots: 'ld', need: ['Prawns', 'Onion', 'Tomato', 'Coconut oil'] },
-  { name: 'Mutton curry', slots: 'ld', need: ['Mutton', 'Onion', 'Tomato', 'Garam masala'] },
-  { name: 'Payasam', slots: 'l', need: ['Vermicelli', 'Milk', 'Sugar', 'Cardamom', 'Ghee'] },
+// Household meals. Quantities are for 4 people and scale with portions.
+// `slots`: b = breakfast, l = lunch, d = dinner. `ing`: "Catalog name qty unit; …"
+const R = (name, mins, slots, ing, veg = true) => ({ name, mins, slots, veg, ing });
+export const RECIPES = [
+  // Breakfast
+  R('Puttu + kadala curry', 40, 'b', 'Puttu podi 500 g; Black chana 250 g; Coconut 1 pcs; Onion 2 pcs; Coconut oil 50 ml'),
+  R('Appam + veg stew', 45, 'bd', 'Appam podi 500 g; Coconut 1 pcs; Potato 3 pcs; Carrot 2 pcs; Onion 1 pcs; Ginger 20 g; Green chilli 3 pcs'),
+  R('Appam + egg curry', 40, 'bd', 'Appam podi 500 g; Eggs 6 pcs; Onion 3 pcs; Tomato 2 pcs; Coconut 1 pcs', false),
+  R('Idiyappam + egg curry', 40, 'bd', 'Idiyappam podi 500 g; Eggs 6 pcs; Onion 3 pcs; Tomato 2 pcs; Coconut 1 pcs', false),
+  R('Dosa + chutney', 20, 'bd', 'Dosa batter 1 kg; Coconut 1 pcs; Green chilli 3 pcs; Small onion 100 g'),
+  R('Dosa + sambar', 25, 'bd', 'Dosa batter 1 kg; Toor dal 150 g; Sambar powder 30 g; Tomato 2 pcs; Small onion 150 g'),
+  R('Idli + sambar', 35, 'b', 'Dosa batter 1 kg; Toor dal 150 g; Sambar powder 30 g; Tomato 2 pcs; Small onion 150 g; Drumstick 2 pcs'),
+  R('Upma', 20, 'b', 'Rava 300 g; Onion 1 pcs; Green chilli 2 pcs; Curry leaves 1 pkt'),
+  R('Poha', 20, 'b', 'Poha 300 g; Onion 2 pcs; Potato 1 pcs; Peas 100 g'),
+  R('Aloo paratha', 40, 'bd', 'Wheat flour 500 g; Potato 4 pcs; Curd 200 g; Butter 50 g'),
+  R('Bread + omelette', 15, 'b', 'Bread 1 pkt; Eggs 6 pcs; Onion 1 pcs', false),
+  R('Oats porridge', 10, 'b', 'Oats 200 g; Milk 1 L; Banana 4 pcs'),
+  // Lunch
+  R('Rice + sambar', 45, 'l', 'Matta rice 600 g; Toor dal 150 g; Sambar powder 30 g; Drumstick 2 pcs; Tomato 2 pcs; Small onion 150 g; Tamarind 30 g'),
+  R('Rice + avial + thoran', 60, 'l', 'Matta rice 600 g; Raw banana 2 pcs; Yam 250 g; Carrot 2 pcs; Beans 250 g; Coconut 2 pcs; Curd 200 g; Cabbage 0.5 pcs'),
+  R('Rice + fish curry', 45, 'ld', 'Matta rice 600 g; Fish 500 g; Tamarind 30 g; Chilli powder 30 g; Coconut 1 pcs; Coconut oil 50 ml', false),
+  R('Rice + fish fry', 30, 'l', 'Matta rice 600 g; Sardine 500 g; Chilli powder 20 g; Turmeric powder 5 g; Coconut oil 100 ml', false),
+  R('Rice + moru curry', 30, 'l', 'Matta rice 600 g; Buttermilk 500 ml; Green chilli 2 pcs; Pappadam 1 pkt'),
+  R('Rice + parippu', 30, 'l', 'Matta rice 600 g; Moong dal 150 g; Coconut 1 pcs; Ghee 30 ml; Pappadam 1 pkt'),
+  R('Rice + dal', 30, 'ld', 'Rice 500 g; Toor dal 200 g; Tomato 2 pcs; Onion 1 pcs'),
+  R('Rice + rasam', 30, 'l', 'Rice 500 g; Tomato 3 pcs; Tamarind 20 g; Rasam powder 20 g; Garlic 30 g'),
+  R('Rice + chicken curry', 60, 'ld', 'Matta rice 600 g; Chicken 1 kg; Onion 4 pcs; Tomato 2 pcs; Chicken masala 30 g; Coconut 1 pcs', false),
+  R('Kanji + cherupayar', 40, 'ld', 'Matta rice 400 g; Green gram 200 g; Coconut 1 pcs; Pappadam 1 pkt'),
+  R('Kappa + meen curry', 60, 'ld', 'Tapioca 1 kg; Fish 500 g; Tamarind 30 g; Chilli powder 30 g; Coconut oil 50 ml', false),
+  R('Curd rice', 20, 'ld', 'Rice 400 g; Curd 500 g; Green chilli 2 pcs'),
+  R('Lemon rice', 25, 'l', 'Rice 500 g; Lemon 3 pcs; Curry leaves 1 pkt'),
+  R('Chicken biryani', 75, 'ld', 'Basmati rice 1 kg; Chicken 1 kg; Onion 5 pcs; Tomato 2 pcs; Curd 200 g; Ghee 100 ml; Garam masala 20 g', false),
+  R('Veg biryani', 60, 'ld', 'Basmati rice 750 g; Carrot 2 pcs; Beans 200 g; Peas 150 g; Onion 4 pcs; Curd 200 g; Ghee 75 ml'),
+  R('Ghee rice + chicken roast', 60, 'ld', 'Basmati rice 750 g; Ghee 100 ml; Chicken 1 kg; Onion 4 pcs', false),
+  R('Rajma chawal', 50, 'ld', 'Rajma 250 g; Rice 500 g; Onion 2 pcs; Tomato 3 pcs'),
+  R('Dal khichdi', 35, 'ld', 'Rice 300 g; Moong dal 200 g; Ghee 30 ml'),
+  // Dinner
+  R('Chapati + chana', 30, 'd', 'Wheat flour 400 g; Chickpeas 250 g; Tomato 500 g; Onion 2 pcs'),
+  R('Chapati + chicken curry', 50, 'd', 'Wheat flour 400 g; Chicken 750 g; Onion 3 pcs; Tomato 2 pcs; Chicken masala 25 g', false),
+  R('Chapati + dal', 30, 'd', 'Wheat flour 400 g; Toor dal 200 g; Tomato 2 pcs; Onion 1 pcs'),
+  R('Chapati + paneer', 35, 'd', 'Wheat flour 400 g; Paneer 200 g; Onion 2 pcs; Tomato 3 pcs; Capsicum 1 pcs'),
+  R('Chapati + veg kurma', 45, 'bd', 'Wheat flour 500 g; Potato 2 pcs; Carrot 2 pcs; Peas 150 g; Coconut 1 pcs'),
+  R('Porotta + beef fry', 60, 'd', 'Maida 500 g; Beef 1 kg; Onion 3 pcs; Coconut 1 pcs; Pepper 10 g', false),
+  R('Fried rice', 30, 'ld', 'Basmati rice 500 g; Carrot 2 pcs; Beans 150 g; Cabbage 0.5 pcs; Eggs 4 pcs', false),
+  R('Veg noodles', 20, 'd', 'Noodles 2 pkt; Carrot 1 pcs; Cabbage 0.5 pcs; Capsicum 1 pcs'),
+  R('Egg roast', 30, 'ld', 'Eggs 8 pcs; Onion 4 pcs; Tomato 2 pcs; Coconut oil 50 ml', false),
+  R('Prawns roast', 40, 'ld', 'Prawns 500 g; Onion 3 pcs; Tomato 2 pcs', false),
+  R('Mutton curry', 75, 'ld', 'Mutton 1 kg; Onion 4 pcs; Tomato 2 pcs; Garam masala 20 g', false),
 ];
 
-// Staples offered as a one-tap "quick start" for an empty kitchen.
-export const STARTER = [
-  'Matta rice', 'Wheat flour', 'Puttu podi', 'Toor dal', 'Black chana', 'Sugar', 'Salt',
-  'Tea powder', 'Coconut oil', 'Coconut', 'Milk', 'Eggs', 'Onion', 'Small onion', 'Tomato',
-  'Potato', 'Green chilli', 'Ginger', 'Garlic', 'Curry leaves', 'Turmeric powder',
-  'Chilli powder', 'Coriander powder', 'Mustard seeds', 'Dishwash liquid', 'Detergent', 'Bath soap', 'Toothpaste',
-];
+// Usual dinners offered during setup.
+export const SETUP_DINNERS = ['Chapati + chana', 'Rice + dal', 'Dosa + sambar', 'Appam + veg stew', 'Rice + fish curry', 'Kanji + cherupayar'];
+
+// One-tap chips on the list when history is still empty.
+export const QUICK_ADD = ['Milk', 'Eggs', 'Bread', 'Tomato', 'Onion', 'Curd', 'Coconut', 'Banana', 'Dishwash liquid', 'Bath soap'];

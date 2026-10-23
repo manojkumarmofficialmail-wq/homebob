@@ -1,372 +1,698 @@
-import { CATALOG, CATEGORIES, DISHES, STARTER } from './data.js';
-import { parseSpeech, matchCatalog } from './parse.js';
-import { load, save, fresh, fromBackup } from './store.js';
+import * as M from './model.js';
+import { CATALOG, SETUP_DINNERS, QUICK_ADD } from './data.js';
+import { parseSpeech } from './parse.js';
 import { canListen, listen, speechError } from './speech.js';
+import {
+  $, $$, esc, rupees, plural, I, avatar, dayName, weekday, dayNum, longDate, timeAgo, fmtTime, isoOf,
+  openSheet, closeSheet, toast, runToastAction,
+} from './ui.js';
 
-// ---------- Text (one place, so Malayalam / Hindi can be added later) ----------
-const STR = {
-  tabs: { home: 'Home', list: 'List', kitchen: 'Kitchen', plan: 'Plan' },
-  slots: { b: 'Breakfast', l: 'Lunch', d: 'Dinner' },
-  levels: { full: 'Full', low: 'Low', out: 'Out' },
-  repeat: { none: 'Once', daily: 'Every day', weekly: 'Every week' },
-  langs: { 'en-IN': 'English', 'ml-IN': 'മലയാളം', 'hi-IN': 'हिंदी', 'ta-IN': 'தமிழ்' },
-};
-
-// ---------- Icons ----------
-const ico = (d, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
-const I = {
-  home: ico('<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>'),
-  list: ico('<circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2 3h3l2.4 11.2a2 2 0 0 0 2 1.6h8.2a2 2 0 0 0 2-1.5L22 7H6"/>'),
-  kitchen: ico('<path d="M7 3h10v4H7z"/><path d="M5 7h14v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"/><path d="M9 12h6"/>'),
-  plan: ico('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
-  camera: ico('<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="14" r="3.5"/>'),
-  mic: ico('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
-  stop: ico('<rect x="7" y="7" width="10" height="10" rx="2"/>'),
-  gear: ico('<path d="M4 7h9M18 7h2M4 17h3M12 17h8"/><circle cx="15.5" cy="7" r="2.3"/><circle cx="9.5" cy="17" r="2.3"/>'),
-  check: ico('<path d="m5 12.5 4.5 4.5L19 7.5"/>'),
-  x: ico('<path d="M6 6l12 12M18 6 6 18"/>'),
-  plus: ico('<path d="M12 5v14M5 12h14"/>'),
-  share: ico('<path d="M4 13v6a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-6M12 3v12M7.5 7.5 12 3l4.5 4.5"/>'),
-  chev: ico('<path d="m9 6 6 6-6 6"/>'),
-  repeat: ico('<path d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4"/>', 'sm'),
-};
-
-// ---------- Helpers ----------
-const $ = (sel, root = document) => root.querySelector(sel);
-const uid = () => Math.random().toString(36).slice(2, 10);
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const iso = (d = new Date()) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-const today = () => iso();
-const addDays = (dateStr, n) => { const d = new Date(dateStr + 'T12:00'); d.setDate(d.getDate() + n); return iso(d); };
-const dayLabel = (dateStr, long) => {
-  if (dateStr === today()) return 'Today';
-  if (dateStr === addDays(today(), 1)) return 'Tomorrow';
-  const d = new Date(dateStr + 'T12:00');
-  return d.toLocaleDateString('en-IN', long ? { weekday: 'long', day: 'numeric', month: 'short' } : { weekday: 'short', day: 'numeric' });
-};
-const rupees = (n) => '₹' + Math.round(n || 0).toLocaleString('en-IN');
-const key = (name) => String(name).trim().toLowerCase();
-const fmtQty = (it) => (it.qty == null ? '' : `${+(+it.qty).toFixed(2)}${it.unit ? ' ' + it.unit : ''}`);
-const catOf = (name) => matchCatalog(name)?.cat || 'Other';
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const { today, addDays } = M;
+const SLOTS = { b: 'Breakfast', l: 'Lunch', d: 'Dinner' };
+const LANGS = { 'en-IN': 'English', 'ml-IN': 'മലയാളം', 'hi-IN': 'हिंदी', 'ta-IN': 'தமிழ்' };
+const REPEAT = { none: 'Once', daily: 'Every day', weekly: 'Every week' };
+const TASK_IDEAS = ['Cook dinner', 'Clean up after dinner', 'Buy groceries', 'Wash clothes', 'Pay electricity bill', 'Water the plants'];
 
 // ---------- State ----------
-let state = load();
-let tab = (() => { try { return localStorage.getItem('homzy:tab') || 'home'; } catch { return 'home'; } })();
-let planDay = today();
-let kitchenFilter = 'all';
+let s = M.load();
+const pref = (k, d) => { try { return localStorage.getItem('homzy:' + k) || d; } catch { return d; } };
+const setPref = (k, v) => { try { localStorage.setItem('homzy:' + k, v); } catch { /* private mode */ } };
+let tab = pref('tab', 'home');
+let planSlot = pref('slot', 'd');
+let listMode = 'active';
+let setupStep = 1;
+let setupDraft = { home: 'Our home', name: '', people: 4, dinners: SETUP_DINNERS.slice(0, 3), others: [] };
+
+const me = () => M.member(s, s.me);
+const who = (id) => (id === s.me ? 'you' : M.firstName(s, id));
+const Who = (id) => (id === s.me ? 'You' : M.firstName(s, id));
 
 function persist() {
-  if (!save(state)) toast('Couldn’t save. Your phone storage may be full.');
+  if (!M.save(s)) toast('Couldn’t save. Phone storage may be full.');
   render();
 }
 
-/** Run a change, save it, and offer Undo. */
-function act(message, change) {
-  const before = JSON.stringify(state);
-  change();
+/** Make a change, save, and offer Undo. */
+function commit(message, change, extra) {
+  const before = JSON.stringify(s);
+  const result = change();
   persist();
-  toast(message, () => { state = JSON.parse(before); persist(); });
+  if (message) toast(typeof message === 'function' ? message(result) : message, { label: 'Undo', run: () => { s = JSON.parse(before); persist(); } });
+  extra?.(result);
+  return result;
 }
 
-const inList = (name) => state.list.find((i) => key(i.name) === key(name));
-const inStock = (name) => state.stock.find((i) => key(i.name) === key(name));
-
-function addToList(items) {
-  let added = 0;
-  for (const it of items) {
-    const existing = inList(it.name);
-    if (existing) {
-      if (it.qty != null) { existing.qty = it.qty; existing.unit = it.unit; }
-      continue;
-    }
-    state.list.push({ id: uid(), name: it.name, cat: it.cat || catOf(it.name), qty: it.qty ?? null, unit: it.unit ?? null, at: Date.now() });
-    added++;
-  }
-  return added;
-}
-
-function setStock(name, level, cat) {
-  const s = inStock(name);
-  if (s) { s.level = level; s.at = Date.now(); }
-  else state.stock.push({ id: uid(), name, cat: cat || catOf(name), level, at: Date.now() });
-}
-
-// ---------- Rendering ----------
+// ---------- Render ----------
 const view = $('#view');
 
 function render() {
+  const ready = s.setup && s.members.length;
+  document.body.classList.toggle('setup-mode', !ready);
+  if (!ready) { view.innerHTML = setupView(); return; }
+  if (!VIEWS[tab]) tab = 'home';
   view.innerHTML = VIEWS[tab]();
-  document.querySelectorAll('.tabs button').forEach((b) => {
+  $$('.tabs button').forEach((b) => {
     const on = b.dataset.tab === tab;
     b.classList.toggle('on', on);
     b.setAttribute('aria-current', on ? 'page' : 'false');
   });
-  const count = state.list.length;
+  document.body.dataset.tab = tab;
+  const active = s.items.length;
   const badge = $('#list-badge');
-  badge.textContent = count;
-  badge.hidden = !count;
-  $('#hello').textContent = tab === 'home' ? greeting() : state.home;
-  $('#title').textContent = tab === 'home' ? state.home : STR.tabs[tab];
+  badge.textContent = active; badge.hidden = !active;
+  const mine = M.forMe(s);
+  const n = mine.items.length + mine.tasks.length;
+  try { n ? navigator.setAppBadge?.(n) : navigator.clearAppBadge?.(); } catch { /* unsupported */ }
 }
 
-function greeting() {
-  const h = new Date().getHours();
-  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
-}
+const head = (title, sub, extra = '') => `
+  <header class="page-head">
+    <div class="ph-text"><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ''}</div>
+    ${extra}
+    <button class="me-btn" data-action="switch" aria-label="Using as ${esc(me()?.name)}. Switch person">${avatar(me())}</button>
+  </header>`;
 
-const emptyBox = (title, text, extra = '') =>
-  `<div class="empty"><p class="empty-title">${title}</p><p>${text}</p>${extra}</div>`;
+const section = (title, right = '') => `<div class="sec-head"><h2 class="sec">${title}</h2>${right}</div>`;
+
+// ----- Setup -----
+function setupView() {
+  const d = setupDraft;
+  if (setupStep === 1) {
+    return `
+      <div class="setup">
+        <p class="brand-mark">${I.home}<span>Homzy</span></p>
+        <h1 class="display">Set up your home</h1>
+        <p class="sub">Step 1 of 2 · takes a minute</p>
+        <form data-form="setup1" class="stack">
+          <label class="field">Home name<input name="home" value="${esc(d.home)}" maxlength="30"></label>
+          <label class="field">Your name<input name="name" value="${esc(d.name)}" placeholder="e.g. Meera" maxlength="24" required autofocus></label>
+          <div class="field">People usually eating
+            <div class="stepper" data-stepper>
+              <button type="button" data-action="step" data-d="-1" aria-label="Fewer people">${I.minus}</button>
+              <output name="peopleOut">${d.people} people</output>
+              <input type="hidden" name="people" value="${d.people}">
+              <button type="button" data-action="step" data-d="1" aria-label="More people">${I.plus}</button>
+            </div>
+          </div>
+          <div class="field">Your usual dinners
+            <div class="chips">
+              ${SETUP_DINNERS.map((n) => `<label class="chip toggle"><input type="checkbox" name="dinner" value="${esc(n)}" ${d.dinners.includes(n) ? 'checked' : ''}>${esc(n)}</label>`).join('')}
+            </div>
+          </div>
+          <p class="note">You can plan now and add family later.</p>
+          <button class="btn coral wide">Continue</button>
+        </form>
+      </div>`;
+  }
+  return `
+    <div class="setup">
+      <button class="link back" data-action="setup-back">${I.back} Back</button>
+      <h1 class="display">Who helps at home?</h1>
+      <p class="sub">Step 2 of 2 · optional</p>
+      <div class="card">
+        <div class="member-row">${avatar({ name: d.name, hue: 14 })}<b>${esc(d.name)}</b><span class="tag">You</span></div>
+        ${d.others.map((n, i) => `<div class="member-row">${avatar({ name: n, hue: [160, 210, 280, 35][i % 4] })}<b>${esc(n)}</b>
+          <button class="icon-btn quiet" data-action="setup-remove" data-i="${i}" aria-label="Remove ${esc(n)}">${I.x}</button></div>`).join('')}
+        <form data-form="setup-add" class="inline-add">
+          <input name="name" placeholder="Add a name… e.g. Arun, Amma" maxlength="24" autocomplete="off" autofocus aria-label="Family member name">
+          <button class="add-btn" aria-label="Add">${I.plus}</button>
+        </form>
+      </div>
+      <p class="note">Everyone can tap their name on this phone to claim shopping and accept tasks. Sync across phones comes in a later version.</p>
+      <button class="btn coral wide" data-action="setup-finish">Create our home</button>
+    </div>`;
+}
 
 // ----- Home -----
 function homeView() {
   const t = today();
-  const meals = state.meals[t] || {};
-  const due = state.tasks.filter((x) => !x.done && x.due <= t).sort((a, b) => a.due.localeCompare(b.due));
-  const low = state.stock.filter((s) => s.level !== 'full' && !inList(s.name));
-  const isNew = !state.list.length && !state.stock.length && !state.bills.length && !state.tasks.length;
-
-  const month = t.slice(0, 7);
-  const lastMonth = iso(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 15)).slice(0, 7);
-  const sum = (m) => state.bills.filter((b) => b.date.startsWith(m)).reduce((a, b) => a + (+b.total || 0), 0);
-  const thisSpend = sum(month), lastSpend = sum(lastMonth);
-  const billCount = state.bills.filter((b) => b.date.startsWith(month)).length;
-  const monthName = new Date().toLocaleDateString('en-IN', { month: 'long' });
+  const meal = M.mealAt(s, t, 'd');
+  const r = meal && M.recipe(s, meal.rid);
+  const rows = r ? M.ingredientRows(s, [{ date: t, slot: 'd' }]) : [];
+  const unchecked = rows.filter((x) => x.state === 'check' && !x.onList).length;
+  const mine = M.forMe(s);
+  const favs = s.favs.map((id) => M.recipe(s, id)).filter(Boolean).slice(0, 4);
+  const shopping = sortItems(s.items).slice(0, 4);
+  const tasks = s.tasks.filter((x) => x.status !== 'done' && x.due <= t).sort(byTaskOrder);
+  const ym = t.slice(0, 7);
+  const spend = M.monthSpend(s, ym);
+  const hour = new Date().getHours();
+  const hello = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
   return `
-    ${isNew ? `
-    <section class="card hero">
-      <p class="eyebrow">Welcome to Homzy</p>
-      <h2>Less typing. More living.</h2>
-      <ul class="steps">
-        <li>${I.camera}<span><b>Scan</b> a shop bill and your kitchen fills itself.</span></li>
-        <li>${I.mic}<span><b>Speak</b> “2 litre milk, 1 kg rice” to make a list.</span></li>
-        <li>${I.kitchen}<span>Mark things <b>Low</b> or <b>Out</b>. They go on the list.</span></li>
-      </ul>
-      <button class="btn ghost" data-action="starter">Quick-fill my kitchen with ${STARTER.length} basics</button>
-    </section>` : ''}
+    ${head(`<span class="brand-title">Homzy</span>`, `${esc(s.home.name)} · Private`, '<button class="install-btn" data-action="install">Install</button>')}
+    <p class="greet">${hello}, ${esc(me().name)}.</p>
 
-    <section class="card">
-      <div class="card-head"><h2>Today’s meals</h2><button class="link" data-action="tab" data-tab="plan">Week ${I.chev}</button></div>
-      <div class="slots">
-        ${['b', 'l', 'd'].map((s) => `
-          <button class="slot ${meals[s] ? '' : 'blank'}" data-action="pick-dish" data-date="${t}" data-slot="${s}">
-            <span class="slot-label">${STR.slots[s]}</span>
-            <span class="slot-dish">${meals[s] ? esc(meals[s]) : 'Choose'}</span>
-          </button>`).join('')}
-      </div>
+    ${mine.items.length || mine.tasks.length ? `
+      <section class="card attention">
+        <p class="eyebrow">${I.bell} Waiting for you</p>
+        <ul class="rows">
+          ${mine.items.map((i) => `<li class="row">
+            <button class="row-main" data-action="item" data-id="${i.id}"><b>Buy ${esc(i.name)}</b><span class="meta">${esc([M.fmtQty(i.qty, i.unit), 'Asked by ' + who(i.addedBy)].filter(Boolean).join(' · '))}</span></button>
+            <div class="pair"><button class="pill ghost" data-action="item-decline" data-id="${i.id}">Can’t today</button><button class="pill coral" data-action="item-accept" data-id="${i.id}">Accept</button></div>
+          </li>`).join('')}
+          ${mine.tasks.map((x) => `<li class="row">
+            <button class="row-main" data-action="task" data-id="${x.id}"><b>${esc(x.title)}</b><span class="meta">${esc([dayName(x.due), fmtTime(x.time), 'Asked by ' + who(x.by)].filter(Boolean).join(' · '))}</span></button>
+            <div class="pair"><button class="pill ghost" data-action="task-decline" data-id="${x.id}">Can’t today</button><button class="pill coral" data-action="task-accept" data-id="${x.id}">Accept</button></div>
+          </li>`).join('')}
+        </ul>
+      </section>` : ''}
+
+    <section class="card tonight">
+      <p class="eyebrow">Tonight · ${longDate(t)}</p>
+      ${r ? `
+        <h2 class="meal-title">${esc(r.name)}</h2>
+        <div class="meta-line">
+          <span>${plural(meal.people, 'person', 'people')}${r.mins ? ` · ${r.mins} min` : ''}</span>
+          ${!r.ing.length ? '<span class="pill sage">Planned</span>'
+            : unchecked ? `<span class="pill sun">${unchecked} to check</span>`
+            : '<span class="pill sage">Ready</span>'}
+        </div>
+        <button class="btn coral wide" data-action="meal" data-date="${t}" data-slot="d">${unchecked ? 'Check ingredients' : 'View dinner plan'}</button>`
+      : `
+        <h2 class="meal-title muted-title">What’s for dinner?</h2>
+        ${favs.length ? `<div class="chips">${favs.map((f) => `<button class="chip" data-action="quick-meal" data-rid="${f.id}">${esc(f.name)}</button>`).join('')}</div>` : ''}
+        <button class="btn coral wide" data-action="pick" data-date="${t}" data-slot="d">Choose dinner</button>`}
     </section>
 
-    <section class="card">
-      <div class="card-head"><h2>To do</h2>${due.length ? `<span class="count">${due.length}</span>` : ''}</div>
-      ${due.length ? `<ul class="rows">${due.map(taskRow).join('')}</ul>` : '<p class="muted small">Nothing due. Nice.</p>'}
-      ${taskForm()}
-    </section>
+    ${section('Shopping', s.items.length ? `<button class="link" data-action="tab" data-tab="list">See all ${s.items.length} ${I.chev}</button>` : '')}
+    ${shopping.length ? `<ul class="card rows">${shopping.map(itemRow).join('')}</ul>`
+      : `<div class="card empty-card"><p>Nothing to buy right now.</p>${quickChips(5)}</div>`}
 
-    ${low.length ? `
-    <section class="card">
-      <div class="card-head"><h2>Running out</h2><button class="link" data-action="low-to-list">Add all to list</button></div>
-      <div class="chips">
-        ${low.map((s) => `<button class="chip lvl-${s.level}" data-action="low-one" data-id="${s.id}">${I.plus}${esc(s.name)}</button>`).join('')}
-      </div>
-    </section>` : ''}
+    ${section('Today’s responsibilities', `<button class="link" data-action="task-new">${I.plus} Ask for a hand</button>`)}
+    ${tasks.length ? `<ul class="card rows">${tasks.map(taskRow).join('')}</ul>`
+      : `<div class="card empty-card"><p>Nothing due today.</p><div class="chips">${TASK_IDEAS.slice(0, 3).map((x) => `<button class="chip" data-action="task-new" data-title="${esc(x)}">${I.plus}${esc(x)}</button>`).join('')}</div></div>`}
 
-    <button class="card spend" data-action="bills">
-      <span>
-        <span class="eyebrow">${monthName} spend</span>
-        <span class="big">${rupees(thisSpend)}</span>
-        <span class="muted small">${billCount ? plural(billCount, 'bill') : 'Scan a bill to start tracking'}${lastSpend ? ` · last month ${rupees(lastSpend)}` : ''}</span>
-      </span>
-      ${I.chev}
+    <button class="card spend-row" data-action="bills">
+      <span><span class="eyebrow plain">${new Date().toLocaleDateString('en-IN', { month: 'long' })} spend</span><b class="big">${rupees(spend)}</b></span>
+      <span class="muted small">${s.bills.filter((b) => b.date.startsWith(ym)).length ? plural(s.bills.filter((b) => b.date.startsWith(ym)).length, 'bill') : 'Scan a bill to track'} ${I.chev}</span>
     </button>`;
 }
 
-function taskRow(x) {
-  const late = x.due < today();
-  const meta = [x.who && esc(x.who), x.repeat !== 'none' && STR.repeat[x.repeat], late && 'from ' + dayLabel(x.due), x.due > today() && dayLabel(x.due)].filter(Boolean).join(' · ');
-  return `
-    <li class="row">
-      <button class="tick" data-action="task-done" data-id="${x.id}" aria-label="Done: ${esc(x.title)}">${I.check}</button>
-      <button class="row-main" data-action="task-edit" data-id="${x.id}">
-        <span class="row-name">${esc(x.title)}</span>
-        ${meta ? `<span class="row-meta ${late ? 'late' : ''}">${meta}</span>` : ''}
-      </button>
-    </li>`;
+function sortItems(items) {
+  const rank = (i) => (i.status === 'awaiting' && i.by === s.me ? 0 : i.status === 'needed' ? 1 : i.status === 'awaiting' ? 2 : 3);
+  return [...items].sort((a, b) => rank(a) - rank(b) || a.addedAt - b.addedAt);
 }
 
-const taskForm = () => `
-  <form class="inline-add" data-form="task">
-    <input name="title" placeholder="Add a task… e.g. Pay electricity bill" autocomplete="off" maxlength="80" aria-label="New task">
-    <button class="add-btn" aria-label="Add task">${I.plus}</button>
-  </form>`;
-
-// ----- List -----
-function listView() {
-  const groups = groupBy(state.list, (i) => i.cat || 'Other');
-  return `
-    <form class="inline-add big" data-form="list-add">
-      <input name="text" placeholder="Add items… e.g. milk, 2 kg rice" autocomplete="off" aria-label="Add items to the list" list="catalog">
-      <button class="add-btn" aria-label="Add">${I.plus}</button>
-    </form>
-    ${state.list.length ? `
-      <p class="hint">Tick an item when you buy it. It moves to your kitchen.</p>
-      ${groups.map(([cat, items]) => `
-        <section class="group">
-          <h3>${esc(cat)}</h3>
-          <ul class="rows card flat">${items.map((i) => `
-            <li class="row">
-              <button class="tick" data-action="bought" data-id="${i.id}" aria-label="Bought ${esc(i.name)}">${I.check}</button>
-              <button class="row-main" data-action="edit-item" data-id="${i.id}">
-                <span class="row-name">${esc(i.name)}</span>
-                ${fmtQty(i) ? `<span class="row-qty">${esc(fmtQty(i))}</span>` : ''}
-              </button>
-              <button class="icon-btn quiet" data-action="remove-item" data-id="${i.id}" aria-label="Remove ${esc(i.name)}">${I.x}</button>
-            </li>`).join('')}
-          </ul>
-        </section>`).join('')}
-      <button class="btn ghost wide" data-action="share-list">${I.share} Share list on WhatsApp</button>
-    ` : emptyBox('Nothing to buy', 'Tap <b>Speak</b> and say what you need, or type above.')}`;
+function itemMeta(i) {
+  const parts = [M.fmtQty(i.qty, i.unit), i.note];
+  if (i.status === 'claimed') parts.push(i.by === s.me ? 'You’re buying' : `${Who(i.by)} is buying`);
+  else if (i.status === 'awaiting') parts.push(i.by === s.me ? 'Asked you' : `Waiting for ${who(i.by)}`);
+  else parts.push(i.addedBy === s.me ? 'Added by you' : `Added by ${who(i.addedBy)}`);
+  return parts.filter(Boolean).join(' · ');
 }
 
-// ----- Kitchen -----
-function kitchenView() {
-  const counts = { low: 0, out: 0 };
-  state.stock.forEach((s) => { if (counts[s.level] != null) counts[s.level]++; });
-  const shown = state.stock.filter((s) => kitchenFilter === 'all' || s.level === kitchenFilter);
-  const groups = groupBy(shown, (s) => s.cat || 'Other');
-  return `
-    <form class="inline-add big" data-form="stock-add">
-      <input name="text" placeholder="Add to kitchen… e.g. rice, dal" autocomplete="off" aria-label="Add to kitchen" list="catalog">
-      <button class="add-btn" aria-label="Add">${I.plus}</button>
-    </form>
-    ${state.stock.length ? `
-      <div class="filters" role="tablist">
-        ${[['all', `All ${state.stock.length}`], ['low', `Low ${counts.low}`], ['out', `Out ${counts.out}`]].map(([f, label]) =>
-          `<button class="filter ${kitchenFilter === f ? 'on' : ''} f-${f}" data-action="kfilter" data-f="${f}" role="tab" aria-selected="${kitchenFilter === f}">${label}</button>`).join('')}
-      </div>
-      <p class="hint">Mark <b>Out</b> and it goes on your shopping list.</p>
-      ${groups.length ? groups.map(([cat, items]) => `
-        <section class="group">
-          <h3>${esc(cat)}</h3>
-          <ul class="rows card flat">${items.map((s) => `
-            <li class="row">
-              <button class="row-main" data-action="stock-edit" data-id="${s.id}"><span class="row-name">${esc(s.name)}</span></button>
-              <div class="seg" role="group" aria-label="${esc(s.name)} level">
-                ${['full', 'low', 'out'].map((l) => `<button class="seg-${l} ${s.level === l ? 'on' : ''}" data-action="level" data-id="${s.id}" data-level="${l}" aria-pressed="${s.level === l}">${STR.levels[l]}</button>`).join('')}
-              </div>
-            </li>`).join('')}
-          </ul>
-        </section>`).join('') : `<p class="muted center">Nothing here.</p>`}
-    ` : emptyBox('Your kitchen is empty', 'Scan a shop bill and items appear here.',
-      `<button class="btn" data-action="starter">Quick-fill ${STARTER.length} basics</button>`)}`;
+function itemPill(i) {
+  if (i.status === 'needed') return `<button class="pill coral" data-action="claim" data-id="${i.id}">I’ll buy</button>`;
+  if (i.status === 'awaiting') return i.by === s.me
+    ? `<button class="pill coral" data-action="item-accept" data-id="${i.id}">Accept</button>`
+    : `<span class="pill sand">Asked</span>`;
+  return i.by === s.me
+    ? `<button class="pill green" data-action="quick-buy" data-id="${i.id}">${I.check} Bought</button>`
+    : `<span class="pill sage">Claimed</span>`;
+}
+
+const itemRow = (i) => `
+  <li class="row">
+    <button class="row-main" data-action="item" data-id="${i.id}">
+      <b>${esc(i.name)}</b><span class="meta">${esc(itemMeta(i))}</span>
+    </button>
+    ${itemPill(i)}
+  </li>`;
+
+function byTaskOrder(a, b) {
+  const rank = (x) => (x.status === 'awaiting' && x.assignee === s.me ? 0 : x.status === 'open' ? 1 : 2);
+  return rank(a) - rank(b) || (a.time || '99').localeCompare(b.time || '99') || a.due.localeCompare(b.due);
+}
+
+function taskMeta(x) {
+  const parts = [];
+  if (x.due < today()) parts.push(`From ${dayName(x.due)}`);
+  else if (x.due > today()) parts.push(dayName(x.due));
+  if (x.status === 'accepted') parts.push(`${Who(x.assignee)} · Accepted`);
+  else if (x.status === 'awaiting') parts.push(x.assignee === s.me ? 'Asked you' : `Request sent to ${who(x.assignee)}`);
+  else parts.push(x.declined ? `${Who(x.declined)} can’t today · Open` : 'Open for anyone');
+  if (x.repeat !== 'none') parts.push(REPEAT[x.repeat]);
+  return parts.join(' · ');
+}
+
+function taskPill(x) {
+  if (x.status === 'open') return `<button class="pill coral" data-action="task-take" data-id="${x.id}">I’ll do it</button>`;
+  if (x.status === 'awaiting') return x.assignee === s.me
+    ? `<button class="pill coral" data-action="task-accept" data-id="${x.id}">Accept</button>`
+    : `<span class="pill sand">Waiting</span>`;
+  return `<span class="pill sage">${x.time ? fmtTime(x.time) : 'Accepted'}</span>`;
+}
+
+const taskRow = (x) => `
+  <li class="row">
+    <button class="tick" data-action="task-done" data-id="${x.id}" aria-label="Mark done: ${esc(x.title)}">${I.check}</button>
+    <button class="row-main" data-action="task" data-id="${x.id}">
+      <b>${esc(x.title)}</b><span class="meta ${x.due < today() ? 'late' : ''}">${esc(taskMeta(x))}</span>
+    </button>
+    ${taskPill(x)}
+  </li>`;
+
+function quickChips(n = 8) {
+  const sug = M.suggestions(s, QUICK_ADD, n);
+  return sug.length ? `<div class="chips">${sug.map((x) => `<button class="chip sage-chip" data-action="quick-add" data-name="${esc(x)}">${esc(x)} ${I.plus}</button>`).join('')}</div>` : '';
 }
 
 // ----- Plan -----
 function planView() {
   const days = Array.from({ length: 7 }, (_, i) => addDays(today(), i));
-  if (!days.includes(planDay)) planDay = days[0];
-  const meals = state.meals[planDay] || {};
-  const open = state.tasks.filter((x) => !x.done).sort((a, b) => a.due.localeCompare(b.due));
+  const first = new Date(days[0] + 'T12:00'), last = new Date(days[6] + 'T12:00');
+  const range = first.getMonth() === last.getMonth()
+    ? `${first.getDate()}–${last.getDate()} ${last.toLocaleDateString('en-IN', { month: 'long' })}`
+    : `${first.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} – ${last.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`;
+  const planned = days.filter((d) => M.mealAt(s, d, planSlot));
+  const lastWeekHas = days.some((d) => M.mealAt(s, addDays(d, -7), planSlot));
   return `
-    <div class="days" role="tablist">
+    ${head('Meal plan', `${range} · ${plural(s.home.people, 'person', 'people')}`)}
+    <div class="seg-tabs" role="tablist">
+      ${Object.entries(SLOTS).map(([k, v]) => `<button class="${planSlot === k ? 'on' : ''}" data-action="slot" data-slot="${k}" role="tab" aria-selected="${planSlot === k}">${v}</button>`).join('')}
+    </div>
+    <ul class="card rows days">
       ${days.map((d) => {
-        const m = state.meals[d] || {};
-        const n = ['b', 'l', 'd'].filter((s) => m[s]).length;
-        const dt = new Date(d + 'T12:00');
-        return `<button class="day ${d === planDay ? 'on' : ''}" data-action="plan-day" data-date="${d}" role="tab" aria-selected="${d === planDay}">
-          <span>${d === today() ? 'Today' : dt.toLocaleDateString('en-IN', { weekday: 'short' })}</span>
-          <b>${dt.getDate()}</b>
-          <i class="dots">${'•'.repeat(n) || '&nbsp;'}</i>
-        </button>`;
+        const m = M.mealAt(s, d, planSlot);
+        const r = m && M.recipe(s, m.rid);
+        return `<li>
+          <button class="day-row" data-action="${r ? 'meal' : 'pick'}" data-date="${d}" data-slot="${planSlot}">
+            <span class="date-col"><small>${d === today() ? 'TODAY' : weekday(d)}</small><b>${dayNum(d)}</b></span>
+            <span class="day-main">
+              ${r ? `<b class="day-meal">${esc(r.name)}</b><span class="meta">${[r.mins && `${r.mins} min`, plural(m.people, 'person', 'people'), 'Edit'].filter(Boolean).join(' · ')}</span>`
+                : `<b class="day-meal blank">Choose a meal</b><span class="meta">Tap a saved favourite</span>`}
+            </span>
+          </button>
+        </li>`;
       }).join('')}
+    </ul>
+    <button class="btn coral wide" data-action="check-week" ${planned.length ? '' : 'disabled'}>Check ingredients${planned.length ? ` · ${plural(planned.length, 'meal')}` : ''}</button>
+    ${lastWeekHas ? `<button class="btn sage wide" data-action="copy-week">${I.copy} Copy last week</button>` : ''}
+    <p class="note plain">Start with tonight. Fill the week when useful.</p>`;
+}
+
+// ----- List -----
+function listView() {
+  const needed = sortItems(s.items.filter((i) => i.status !== 'claimed'));
+  const claimed = s.items.filter((i) => i.status === 'claimed');
+  return `
+    ${head('Shopping list', 'Everyone at home sees the same list')}
+    <div class="seg-tabs" role="tablist">
+      <button class="${listMode === 'active' ? 'on' : ''}" data-action="list-mode" data-mode="active" role="tab">Active · ${s.items.length}</button>
+      <button class="${listMode === 'bought' ? 'on' : ''}" data-action="list-mode" data-mode="bought" role="tab">Bought</button>
+    </div>
+    ${listMode === 'active' ? `
+      <form class="inline-add big" data-form="list-add">
+        <input name="text" placeholder="+ Add an item… e.g. milk, 2 kg rice" autocomplete="off" aria-label="Add items" list="catalog">
+        <button class="add-btn" aria-label="Add">${I.plus}</button>
+      </form>
+      ${quickChips(6)}
+      ${needed.length ? `${section('To buy')}<ul class="card rows">${needed.map(itemRow).join('')}</ul>` : ''}
+      ${claimed.length ? `${section('Claimed')}<ul class="card rows">${claimed.map(itemRow).join('')}</ul>
+        <p class="note plain">Claimed items stay visible until someone marks them bought.</p>` : ''}
+      ${!s.items.length ? `<div class="empty"><p class="empty-title">Nothing to buy</p><p>Tap <b>Speak</b> and say what you need, or tap a chip above.</p></div>`
+        : `<p class="note">Tap “I’ll buy” to take it on. Everyone can see who is buying.</p>
+           <button class="btn ghost wide" data-action="share-list">${I.share} Share list on WhatsApp</button>`}
+    ` : boughtView()}`;
+}
+
+function boughtView() {
+  const ym = today().slice(0, 7);
+  const groups = new Map();
+  for (const b of s.bought.slice(0, 120)) {
+    const d = new Date(b.at); const k = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(b);
+  }
+  return `
+    <button class="card spend-row" data-action="bills">
+      <span><span class="eyebrow plain">This month’s bills</span><b class="big">${rupees(M.monthSpend(s, ym))}</b></span>
+      <span class="muted small">Add or view ${I.chev}</span>
+    </button>
+    ${groups.size ? [...groups.entries()].map(([d, list]) => `
+      ${section(dayName(d, 'long'))}
+      <ul class="card rows">${list.map((b) => `
+        <li class="row">
+          <span class="row-main static"><b>${esc(b.name)}${b.qty != null ? ` · ${esc(M.fmtQty(b.qty, b.unit))}` : ''}</b>
+            <span class="meta">Bought by ${esc(who(b.by))} · ${new Date(b.at).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}${b.price ? ' · ' + rupees(b.price) : ''}</span></span>
+          <button class="icon-btn quiet" data-action="restore" data-id="${b.id}" aria-label="Put ${esc(b.name)} back on the list" title="Put back on list">${I.restore}</button>
+        </li>`).join('')}
+      </ul>`).join('') + '<p class="note plain">Bought something by mistake? Tap ↩ to put it back on the list.</p>'
+    : `<div class="empty"><p class="empty-title">No purchases yet</p><p>Items marked bought appear here with who bought them and when.</p></div>`}`;
+}
+
+// ----- Family -----
+function familyView() {
+  const recipes = s.favs.map((id) => M.recipe(s, id)).filter(Boolean);
+  return `
+    ${head('Family', `${esc(s.home.name)} · ${plural(s.members.length, 'member')}`)}
+    ${section('Using this phone as')}
+    <div class="card">
+      <div class="who-grid">
+        ${s.members.map((m) => `<button class="who ${m.id === s.me ? 'on' : ''}" data-action="be" data-id="${m.id}" aria-pressed="${m.id === s.me}">${avatar(m, 'lg')}<span>${esc(m.name)}</span></button>`).join('')}
+      </div>
+      <p class="note plain">Tap your name before you claim shopping or accept a task.</p>
     </div>
 
-    <section class="card">
-      <div class="card-head"><h2>${dayLabel(planDay, true)}</h2></div>
-      <div class="slots">
-        ${['b', 'l', 'd'].map((s) => `
-          <button class="slot ${meals[s] ? '' : 'blank'}" data-action="pick-dish" data-date="${planDay}" data-slot="${s}">
-            <span class="slot-label">${STR.slots[s]}</span>
-            <span class="slot-dish">${meals[s] ? esc(meals[s]) : 'Choose'}</span>
-          </button>`).join('')}
+    ${section('Members')}
+    <ul class="card rows">
+      ${s.members.map((m) => {
+        const buying = s.items.filter((i) => i.status === 'claimed' && i.by === m.id).length;
+        const doing = s.tasks.filter((t) => t.status === 'accepted' && t.assignee === m.id).length;
+        return `<li class="row">
+          ${avatar(m)}
+          <span class="row-main static"><b>${esc(m.name)}${m.id === s.me ? ' <span class="tag">You</span>' : ''}</b>
+            <span class="meta">${[buying && `Buying ${buying}`, doing && plural(doing, 'task')].filter(Boolean).join(' · ') || 'Nothing taken on'}</span></span>
+          ${m.id !== s.me ? `<button class="icon-btn quiet" data-action="member-remove" data-id="${m.id}" aria-label="Remove ${esc(m.name)}">${I.x}</button>` : ''}
+        </li>`;
+      }).join('')}
+      <li><form data-form="member-add" class="inline-add pad">
+        <input name="name" placeholder="Add a family member" maxlength="24" autocomplete="off" aria-label="Family member name">
+        <button class="add-btn" aria-label="Add">${I.plus}</button>
+      </form></li>
+    </ul>
+    <div class="card info">
+      <b>Invite another adult</b>
+      <p>Private invite links with their own account come with family sync. Until then, share the list on WhatsApp or use this phone together.</p>
+    </div>
+
+    ${section('Our meals', `<button class="link" data-action="recipe-new">${I.plus} Add a recipe</button>`)}
+    <ul class="card rows">
+      ${recipes.length ? recipes.map((r) => `<li class="row">
+        <button class="row-main" data-action="recipe" data-id="${r.id}"><b>${esc(r.name)}</b>
+          <span class="meta">${[r.mins && `${r.mins} min`, r.ing.length ? plural(r.ing.length, 'ingredient') : 'No ingredients yet'].filter(Boolean).join(' · ')}</span></button>
+        <button class="icon-btn quiet on" data-action="fav" data-id="${r.id}" aria-label="Remove from favourites">${I.star}</button>
+      </li>`).join('') : '<li class="row"><span class="meta">Meals you plan are saved here as favourites.</span></li>'}
+    </ul>
+
+    ${s.log.length ? `${section('Recent activity')}
+    <ul class="card rows activity">${s.log.slice(0, 8).map((l) => `<li class="row">${avatar(M.member(s, l.by), 'sm')}<span class="row-main static"><span>${esc(M.firstName(s, l.by))} ${esc(l.text)}</span><span class="meta">${timeAgo(l.at)}</span></span></li>`).join('')}</ul>` : ''}
+
+    ${section('Home settings')}
+    <div class="card stack-sm">
+      <button class="menu-row" data-action="settings">Home name, portions & voice ${I.chev}</button>
+      <button class="menu-row" data-action="backup">Download a backup ${I.chev}</button>
+      <button class="menu-row" data-action="restore-file">Restore from backup ${I.chev}</button>
+      <button class="menu-row danger" data-action="reset">Delete this home’s data ${I.chev}</button>
+    </div>
+    <p class="note plain center">Homzy keeps everything on this phone. Nothing is uploaded.</p>`;
+}
+
+const VIEWS = { home: homeView, plan: planView, list: listView, family: familyView };
+
+// ---------- Sheets ----------
+function switchSheet() {
+  openSheet(`
+    <h2 class="sheet-title">Who’s using Homzy?</h2>
+    <div class="who-grid">
+      ${s.members.map((m) => `<button class="who ${m.id === s.me ? 'on' : ''}" data-action="be" data-id="${m.id}" data-close="1">${avatar(m, 'lg')}<span>${esc(m.name)}</span></button>`).join('')}
+    </div>
+    <form data-form="member-add" class="inline-add">
+      <input name="name" placeholder="Add a family member" maxlength="24" autocomplete="off" aria-label="Family member name">
+      <button class="add-btn" aria-label="Add">${I.plus}</button>
+    </form>`);
+}
+
+// ----- Pick a meal -----
+function pickSheet(date, slot) {
+  const current = M.mealAt(s, date, slot)?.rid;
+  const all = M.allRecipes(s);
+  const draw = (q) => {
+    const k = M.key(q);
+    const match = (r) => !k || M.key(r.name).includes(k) || r.ing.some((i) => M.key(i.name).includes(k));
+    const favs = s.favs.map((id) => M.recipe(s, id)).filter((r) => r && match(r));
+    const rest = all.filter((r) => !s.favs.includes(r.id) && match(r))
+      .sort((a, b) => (b.slots.includes(slot) - a.slots.includes(slot)) || a.name.localeCompare(b.name));
+    const btn = (r) => `<li><button class="pick ${r.id === current ? 'on' : ''}" data-action="set-meal" data-rid="${r.id}">
+      <span><b>${esc(r.name)}</b><span class="meta">${[r.mins && `${r.mins} min`, r.veg === false ? 'Non-veg' : 'Veg'].filter(Boolean).join(' · ')}</span></span>${r.id === current ? I.check : ''}</button></li>`;
+    return `
+      ${favs.length ? `<li class="pick-head">Favourites</li>${favs.map(btn).join('')}` : ''}
+      ${rest.length ? `<li class="pick-head">${k ? 'Matches' : SLOTS[slot] + ' ideas'}</li>${rest.slice(0, 40).map(btn).join('')}` : ''}
+      ${k && !all.some((r) => M.key(r.name) === k) ? `<li><button class="pick add" data-action="new-meal" data-name="${esc(q.trim())}">${I.plus} Add “${esc(q.trim())}” as a family meal</button></li>` : ''}`;
+  };
+  openSheet(`
+    <h2 class="sheet-title">${SLOTS[slot]} · ${dayName(date, 'long')}</h2>
+    <input class="search" id="pick-q" placeholder="Search appam, dal, fish…" autocomplete="off" aria-label="Search meals">
+    <ul class="picks" id="pick-list" data-date="${date}" data-slot="${slot}">${draw('')}</ul>
+    ${current ? `<button class="btn ghost wide danger" data-action="clear-meal">Clear ${SLOTS[slot].toLowerCase()}</button>` : ''}`, {
+    tall: true,
+    onMount: (sh) => {
+      const q = $('#pick-q', sh);
+      q.addEventListener('input', () => { $('#pick-list').innerHTML = draw(q.value); });
+      q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#pick-list .pick')?.click(); } });
+    },
+  });
+}
+
+// ----- Meal detail with Have / Need / Check -----
+let checkCtx = null; // { meals: [{date, slot}], title, sub }
+
+function mealSheet(date, slot) {
+  const m = M.mealAt(s, date, slot);
+  const r = m && M.recipe(s, m.rid);
+  if (!r) return pickSheet(date, slot);
+  checkCtx = { meals: [{ date, slot }], date, slot, single: true };
+  drawCheckSheet();
+}
+
+function checkWeekSheet() {
+  const days = Array.from({ length: 7 }, (_, i) => addDays(today(), i));
+  const meals = days.filter((d) => M.mealAt(s, d, planSlot)).map((date) => ({ date, slot: planSlot }));
+  if (!meals.length) return;
+  checkCtx = { meals, single: false };
+  drawCheckSheet();
+}
+
+function drawCheckSheet(keepOpen) {
+  const ctx = checkCtx;
+  const rows = M.ingredientRows(s, ctx.meals);
+  const need = rows.filter((x) => x.state === 'need' && !x.onList);
+  const unchecked = rows.filter((x) => x.state === 'check' && !x.onList);
+  let top;
+  if (ctx.single) {
+    const m = M.mealAt(s, ctx.date, ctx.slot);
+    const r = M.recipe(s, m.rid);
+    top = `
+      <p class="eyebrow">${SLOTS[ctx.slot]} · ${dayName(ctx.date, 'long')}</p>
+      <h2 class="sheet-title big">${esc(r.name)}</h2>
+      <div class="meta-line">
+        <div class="stepper sm">
+          <button data-action="meal-people" data-d="-1" aria-label="Fewer people">${I.minus}</button>
+          <output>${plural(m.people, 'person', 'people')}</output>
+          <button data-action="meal-people" data-d="1" aria-label="More people">${I.plus}</button>
+        </div>
+        ${r.mins ? `<span class="muted">${I.clock} ${r.mins} min</span>` : ''}
+      </div>`;
+  } else {
+    top = `<h2 class="sheet-title big">Check ingredients</h2>
+      <p class="sub">${ctx.meals.map((x) => esc(M.recipe(s, M.mealAt(s, x.date, x.slot).rid).name)).join(' · ')}</p>`;
+  }
+  const html = `
+    ${top}
+    ${rows.length ? `
+      <p class="note">Confirm kitchen stock. Quantities are editable estimates.</p>
+      <div class="check-tools"><button class="link" data-action="all-have">Mark everything Have</button></div>
+      <ul class="checks">
+        ${rows.map((x, idx) => `<li class="check-item ${x.onList ? 'is-listed' : ''}">
+          <div class="ci-name"><b>${esc(x.name)}${x.qty ? ` · ${esc(M.fmtQty(x.qty, x.unit))}` : ''}</b>
+            ${x.onList ? '<span class="tag">On the list</span>' : x.recent ? `<span class="hint">Bought ${dayName(isoOf(new Date(x.recent.at))).toLowerCase()}</span>` : ''}
+            ${!ctx.single && x.meals.length > 1 ? `<span class="hint">${plural(x.meals.length, 'meal')}</span>` : ''}</div>
+          ${x.onList ? '' : `<div class="hnc" role="radiogroup" aria-label="${esc(x.name)}">
+            ${['have', 'need', 'check'].map((st) => `<button class="hnc-${st} ${x.state === st ? 'on' : ''}" data-action="hnc" data-i="${idx}" data-st="${st}" role="radio" aria-checked="${x.state === st}">${st[0].toUpperCase() + st.slice(1)}</button>`).join('')}
+          </div>`}
+        </li>`).join('')}
+      </ul>
+      <button class="btn coral wide" data-action="add-needs" ${need.length ? '' : 'disabled'}>
+        ${need.length ? (need.length === 1 ? `Add ${esc(need[0].name.toLowerCase())} to list` : `Add ${need.length} items to list`) : 'Mark what you need'}</button>
+      <p class="note">${unchecked.length ? `Only confirmed shortages enter the list. ${esc(unchecked.slice(0, 3).map((x) => x.name).join(', '))}${unchecked.length > 3 ? ` and ${unchecked.length - 3} more` : ''} still ${unchecked.length === 1 ? 'needs' : 'need'} checking.` : 'Everything is checked.'}</p>`
+    : `<p class="note">This meal has no ingredients yet. Add them once and Homzy remembers.</p>`}
+    ${ctx.single ? `<div class="btn-row">
+      <button class="btn ghost" data-action="pick" data-date="${ctx.date}" data-slot="${ctx.slot}">Change meal</button>
+      <button class="btn ghost" data-action="recipe" data-id="${M.mealAt(s, ctx.date, ctx.slot).rid}">Edit recipe</button>
+    </div>` : ''}`;
+  if (keepOpen && $('.sheet')) {
+    const sh = $('.sheet'); const y = sh.scrollTop;
+    sh.innerHTML = `<div class="grip"></div>${html}`;
+    sh.scrollTop = y;
+  } else openSheet(html, { tall: true });
+  checkCtx.rows = rows;
+}
+
+// ----- Item detail -----
+function itemSheet(id) {
+  const i = s.items.find((x) => x.id === id);
+  if (!i) return closeSheet();
+  const mine = i.by === s.me;
+  let status;
+  if (i.status === 'needed') status = `
+    <div class="status-box"><b>No one is buying yet</b><span>Take it on, or ask someone.</span></div>
+    <button class="btn coral wide" data-action="claim" data-id="${id}" data-keep="1">I’ll buy</button>
+    <p class="field-label">Ask someone</p>
+    <div class="chips">${s.members.filter((m) => m.id !== s.me).map((m) => `<button class="chip" data-action="assign" data-id="${id}" data-m="${m.id}">${avatar(m, 'sm')} ${esc(m.name)}</button>`).join('') || '<span class="muted small">Add family members in the Family tab.</span>'}</div>`;
+  else if (i.status === 'awaiting') status = mine ? `
+    <div class="status-box warm"><b>${esc(Who(i.addedBy))} asked you to buy this</b><span>Accept to show everyone you’re on it.</span></div>
+    <div class="btn-row"><button class="btn ghost" data-action="item-decline" data-id="${id}" data-keep="1">Can’t today</button><button class="btn coral" data-action="item-accept" data-id="${id}" data-keep="1">Accept</button></div>`
+    : `<div class="status-box warm"><b>Waiting for ${esc(who(i.by))}</b><span>Asking alone doesn’t mean accepted.</span></div>
+    <button class="btn ghost wide" data-action="release" data-id="${id}" data-keep="1">Cancel the request</button>`;
+  else status = mine ? `
+    <div class="status-box"><div class="sb-line"><span class="pill sage">You are buying</span><button class="link coral-text" data-action="release" data-id="${id}" data-keep="1">Release</button></div>
+      <span>Everyone sees “${esc(me().name)} is buying”. It stays on the list until bought.</span></div>`
+    : `<div class="status-box"><b>${esc(Who(i.by))} is buying</b><span>${esc(i.name)} stays on the active list.</span></div>`;
+
+  const buyForm = i.status === 'claimed' || i.status === 'needed' ? `
+    <form data-form="buy" data-id="${id}" class="stack">
+      <div class="${i.qty == null ? 'stack' : 'two'}">
+        ${i.qty == null ? '' : `<label class="field">Quantity bought<input name="qty" inputmode="decimal" value="${i.qty}">
+          ${i.unit ? `<span class="unit">${esc(i.unit)}</span>` : ''}</label>`}
+        <label class="field"><span>Price ₹ <span class="opt">optional</span></span><input name="price" inputmode="decimal" placeholder="—"></label>
       </div>
-      <button class="btn ghost wide" data-action="missing">${I.list} Get missing ingredients for the week</button>
-    </section>
+      <button class="btn ${i.status === 'claimed' && mine ? 'coral' : 'sage'} wide" id="buy-btn">${i.status === 'claimed' && !mine ? `I bought it instead` : 'Mark bought'}</button>
+    </form>
+    <p class="note plain">Price and receipt are optional. Buying less leaves the rest on the list.</p>` : '';
 
-    <section class="card">
-      <div class="card-head"><h2>Tasks</h2>${open.length ? `<span class="count">${open.length}</span>` : ''}</div>
-      ${open.length ? `<ul class="rows">${open.map(taskRow).join('')}</ul>` : '<p class="muted small">No tasks yet. Add chores, bills to pay, things to fix.</p>'}
-      ${taskForm()}
-    </section>`;
+  openSheet(`
+    <h2 class="sheet-title big">${esc(i.name)}${i.qty != null ? ` · ${esc(M.fmtQty(i.qty, i.unit))}` : ''}</h2>
+    <p class="sub">Added by ${esc(who(i.addedBy))} · ${timeAgo(i.addedAt)}${i.meal ? ` · for ${esc(i.meal)}` : ''}</p>
+    ${status}
+    ${buyForm}
+    <details class="more">
+      <summary>Edit item</summary>
+      <form data-form="item-edit" data-id="${id}" class="stack">
+        <label class="field">Name<input name="name" value="${esc(i.name)}" maxlength="40" required></label>
+        <div class="two">
+          <label class="field">Quantity<input name="qty" inputmode="decimal" value="${i.qty ?? ''}" placeholder="optional"></label>
+          <label class="field">Unit<select name="unit">${['', 'kg', 'g', 'L', 'ml', 'pcs', 'pkt', 'dozen', 'bottle'].map((u) => `<option value="${u}" ${u === (i.unit || '') ? 'selected' : ''}>${u || '—'}</option>`).join('')}</select></label>
+        </div>
+        <label class="field">Brand or note<input name="note" value="${esc(i.note)}" placeholder="Any brand is fine" maxlength="40"></label>
+        <div class="btn-row"><button type="button" class="btn ghost danger" data-action="item-remove" data-id="${id}">Remove</button><button class="btn sage">Save</button></div>
+      </form>
+    </details>`, {
+    onMount: (sh) => {
+      const q = sh.querySelector('[data-form="buy"] [name="qty"]');
+      const btn = sh.querySelector('#buy-btn');
+      if (q && btn && i.qty != null) q.addEventListener('input', () => {
+        const v = parseFloat(q.value);
+        const base = i.status === 'claimed' && !mine ? 'I bought it instead' : 'Mark bought';
+        btn.textContent = v > 0 && v < i.qty ? `Record part · ${M.fmtQty(+(i.qty - v).toFixed(2), i.unit)} left` : base;
+      });
+    },
+  });
 }
 
-const VIEWS = { home: homeView, list: listView, kitchen: kitchenView, plan: planView };
-
-function groupBy(arr, fn) {
-  const m = new Map();
-  for (const x of arr) { const k = fn(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); }
-  for (const items of m.values()) items.sort((a, b) => a.name.localeCompare(b.name));
-  return [...m.entries()].sort((a, b) => CATEGORIES.indexOf(a[0]) - CATEGORIES.indexOf(b[0]));
+// ----- Tasks -----
+function taskSheet(id, preset = {}) {
+  const x = id ? s.tasks.find((t) => t.id === id) : null;
+  if (id && !x) return closeSheet();
+  const t = x || { title: preset.title || '', due: today(), time: '', assignee: null, repeat: 'none' };
+  let status = '';
+  if (x) {
+    if (x.status === 'awaiting' && x.assignee === s.me) status = `
+      <div class="status-box warm"><b>${esc(Who(x.by))} asked you</b><span>Accept, or say you can’t today.</span></div>
+      <div class="btn-row"><button class="btn ghost" data-action="task-decline" data-id="${x.id}" data-close="1">Can’t today</button><button class="btn coral" data-action="task-accept" data-id="${x.id}" data-close="1">Accept</button></div>`;
+    else if (x.status === 'awaiting') status = `<div class="status-box warm"><b>Waiting for ${esc(who(x.assignee))}</b><span>Assigning alone never means accepted.</span></div>`;
+    else if (x.status === 'open') status = `<div class="status-box"><b>Open for anyone</b><span>${x.declined ? esc(Who(x.declined)) + ' can’t today.' : 'Anyone at home can take this.'}</span></div>
+      <button class="btn coral wide" data-action="task-take" data-id="${x.id}" data-close="1">I’ll do it</button>`;
+    else status = `<div class="status-box"><b>${esc(Who(x.assignee))} · Accepted</b><span>${x.time ? 'At ' + fmtTime(x.time) : 'Today'}</span></div>
+      <div class="btn-row">${x.assignee === s.me ? `<button class="btn ghost" data-action="task-release" data-id="${x.id}" data-close="1">Release</button>` : ''}<button class="btn coral" data-action="task-done" data-id="${x.id}" data-close="1">${I.check} Mark done</button></div>`;
+  }
+  openSheet(`
+    <h2 class="sheet-title big">${x ? esc(x.title) : 'Ask for a hand'}</h2>
+    ${status}
+    <form data-form="task" ${x ? `data-id="${x.id}"` : ''} class="stack">
+      ${x ? '' : `<div class="chips">${TASK_IDEAS.map((n) => `<button type="button" class="chip" data-action="task-idea" data-title="${esc(n)}">${esc(n)}</button>`).join('')}</div>`}
+      <label class="field">What needs doing?<input name="title" value="${esc(t.title)}" placeholder="Cook dinner, clear up, water plants…" maxlength="80" required ${x ? '' : 'autofocus'}></label>
+      <div class="field">Who could help?
+        <div class="chips">
+          <label class="chip toggle"><input type="radio" name="assignee" value="" ${!t.assignee ? 'checked' : ''}>Anyone</label>
+          ${s.members.map((m) => `<label class="chip toggle"><input type="radio" name="assignee" value="${m.id}" ${t.assignee === m.id ? 'checked' : ''}>${m.id === s.me ? 'Me' : esc(m.name)}</label>`).join('')}
+        </div>
+      </div>
+      <div class="two">
+        <label class="field">When?<input type="date" name="due" value="${t.due}"></label>
+        <label class="field"><span>Time <span class="opt">optional</span></span><input type="time" name="time" value="${t.time}"></label>
+      </div>
+      <div class="chips">${Object.entries(REPEAT).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="repeat" value="${k}" ${t.repeat === k ? 'checked' : ''}>${v}</label>`).join('')}</div>
+      <button class="btn ${x ? 'sage' : 'coral'} wide">${x ? 'Save changes' : 'Send request'}</button>
+    </form>
+    ${x ? `<button class="btn ghost wide danger" data-action="task-remove" data-id="${x.id}">Delete</button>` : ''}`, { tall: true });
 }
 
-// ---------- Sheets (bottom panels) ----------
-const sheetRoot = $('#sheet-root');
-let sheetCleanup = null;
-let sheetHistory = false;
-
-function openSheet(html, { onMount, onClose } = {}) {
-  closeSheet(true);
-  sheetRoot.innerHTML = `<div class="backdrop" data-action="close-sheet"></div>
-    <div class="sheet" role="dialog" aria-modal="true"><div class="grip"></div>${html}</div>`;
-  sheetRoot.hidden = false;
-  document.body.classList.add('locked');
-  sheetCleanup = onClose || null;
-  if (!sheetHistory) { history.pushState({ sheet: true }, ''); sheetHistory = true; }
-  onMount?.($('.sheet', sheetRoot));
+// ----- Recipe editor -----
+function recipeSheet(id, preset = {}) {
+  const r = id ? M.recipe(s, id) : { name: preset.name || '', mins: '', slots: preset.slot || 'd', veg: true, ing: [] };
+  if (!r) return;
+  const pick = preset.date ? `data-date="${preset.date}" data-slot="${preset.slot}"` : '';
+  openSheet(`
+    <h2 class="sheet-title big">${id ? 'Edit recipe' : 'Save a family recipe'}</h2>
+    <form data-form="recipe" ${id ? `data-id="${id}"` : ''} ${pick} class="stack">
+      <label class="field">Meal name<input name="name" value="${esc(r.name)}" placeholder="Amma’s avial + rice" maxlength="60" required ${id ? '' : 'autofocus'}></label>
+      <div class="two">
+        <label class="field">Cooking time<input name="mins" inputmode="numeric" value="${r.mins || ''}" placeholder="min"></label>
+        <div class="field">Type<div class="chips">
+          <label class="chip toggle"><input type="radio" name="veg" value="1" ${r.veg !== false ? 'checked' : ''}>Veg</label>
+          <label class="chip toggle"><input type="radio" name="veg" value="0" ${r.veg === false ? 'checked' : ''}>Non-veg</label>
+        </div></div>
+      </div>
+      <div class="field">Good for<div class="chips">${Object.entries(SLOTS).map(([k, v]) => `<label class="chip toggle"><input type="checkbox" name="slots" value="${k}" ${r.slots.includes(k) ? 'checked' : ''}>${v}</label>`).join('')}</div></div>
+      <label class="field"><span>Ingredients for 4 people <span class="opt">one per line</span></span>
+        <textarea name="ing" rows="6" placeholder="Rice 500 g&#10;Toor dal 200 g&#10;Tomato 2 pcs">${esc(r.ing.map((x) => [x.name, x.qty, x.unit].filter((v) => v != null && v !== '').join(' ')).join('\n'))}</textarea></label>
+      <button class="btn coral wide">${id ? 'Save recipe' : preset.date ? 'Save and plan it' : 'Save recipe'}</button>
+    </form>
+    ${id ? `<button class="btn ghost wide" data-action="fav" data-id="${id}" data-close="1">${s.favs.includes(id) ? 'Remove from favourites' : 'Add to favourites'}</button>` : ''}`, { tall: true });
 }
 
-function closeSheet(silent) {
-  if (sheetRoot.hidden) return;
-  sheetCleanup?.();
-  sheetCleanup = null;
-  sheetRoot.hidden = true;
-  sheetRoot.innerHTML = '';
-  document.body.classList.remove('locked');
-  if (!silent && sheetHistory) { sheetHistory = false; history.back(); }
+// ----- Bills -----
+function billsSheet() {
+  const bills = [...s.bills].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 40);
+  openSheet(`
+    <h2 class="sheet-title big">Bills</h2>
+    ${bills.length ? `<ul class="rows">${bills.map((b) => `<li class="row">
+      <span class="row-main static"><b>${esc(b.shop || 'Bill')}</b><span class="meta">${dayName(b.date)}${b.count ? ' · ' + plural(b.count, 'item') : ''} · ${esc(who(b.by))}</span></span>
+      <b>${rupees(b.total)}</b>
+      <button class="icon-btn quiet" data-action="bill-remove" data-id="${b.id}" aria-label="Delete bill">${I.x}</button></li>`).join('')}</ul>`
+      : '<p class="note">No bills yet. Scan one, or add the total below.</p>'}
+    <form data-form="bill" class="two add-bill">
+      <input name="shop" placeholder="Shop (optional)" maxlength="40" aria-label="Shop">
+      <input name="total" inputmode="decimal" placeholder="₹ Amount" required aria-label="Amount">
+      <button class="btn sage">Add bill</button>
+    </form>`);
 }
 
-window.addEventListener('popstate', () => { sheetHistory = false; closeSheet(true); });
-
-// ---------- Toast ----------
-let toastTimer;
-function toast(message, undo) {
-  const el = $('#toast');
-  el.innerHTML = `<span>${esc(message)}</span>${undo ? '<button class="link" data-action="undo">Undo</button>' : ''}`;
-  el.hidden = false;
-  el._undo = undo;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; el._undo = null; }, undo ? 6000 : 3500);
+function settingsSheet() {
+  openSheet(`
+    <h2 class="sheet-title big">Home settings</h2>
+    <form data-form="settings" class="stack">
+      <label class="field">Home name<input name="home" value="${esc(s.home.name)}" maxlength="30"></label>
+      <div class="field">People usually eating
+        <div class="stepper" data-stepper>
+          <button type="button" data-action="step" data-d="-1" aria-label="Fewer">${I.minus}</button>
+          <output>${plural(s.home.people, 'person', 'people')}</output>
+          <input type="hidden" name="people" value="${s.home.people}">
+          <button type="button" data-action="step" data-d="1" aria-label="More">${I.plus}</button>
+        </div>
+      </div>
+      <div class="field">Voice language<div class="chips">${Object.entries(LANGS).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="lang" value="${k}" ${s.lang === k ? 'checked' : ''}>${v}</label>`).join('')}</div></div>
+      <button class="btn coral wide">Save</button>
+    </form>`);
 }
 
 // ---------- Speak ----------
 let stopListening = null;
-
-function openSpeak() {
-  const langs = Object.entries(STR.langs);
+function speakSheet() {
   openSheet(`
-    <h2 class="sheet-title">What do you need?</h2>
+    <h2 class="sheet-title big center">What do we need?</h2>
     ${canListen ? `
       <button class="mic" id="mic" aria-label="Start listening">${I.mic}</button>
       <p class="heard" id="heard" aria-live="polite">Say it like you’d say it at home.</p>
-      <p class="muted small center">“Two litre milk, one kilo rice and six eggs”</p>
-      <div class="chips center" role="radiogroup" aria-label="Speaking language">
-        ${langs.map(([code, label]) => `<button class="chip ${state.lang === code ? 'on' : ''}" data-action="lang" data-lang="${code}" role="radio" aria-checked="${state.lang === code}">${label}</button>`).join('')}
-      </div>` : `<p class="muted">Voice isn’t supported in this browser. Type below, or use your keyboard’s mic button.</p>`}
+      <p class="note plain center">“Two litres of milk, one kilo rice and six eggs.”</p>
+      <div class="chips center">${Object.entries(LANGS).map(([k, v]) => `<button class="chip ${s.lang === k ? 'on' : ''}" data-action="lang" data-lang="${k}">${v}</button>`).join('')}</div>`
+    : `<p class="note">Voice isn’t available in this browser. Type below, or use your keyboard’s mic.</p>`}
     <form class="inline-add" data-form="speak-type">
-      <input name="text" placeholder="Or type: milk, 2 kg rice, eggs" autocomplete="off" aria-label="Type items">
+      <input name="text" placeholder="Or type: milk, 2 kg rice, eggs" autocomplete="off" aria-label="Type items" ${canListen ? '' : 'autofocus'}>
       <button class="add-btn" aria-label="Add">${I.plus}</button>
     </form>`, {
-    onMount: () => { if (canListen) startListening(); else $('.sheet input').focus(); },
+    onMount: () => { if (canListen) startListening(); },
     onClose: () => { stopListening?.(); stopListening = null; },
   });
 }
@@ -375,400 +701,318 @@ function startListening() {
   const mic = $('#mic'), heard = $('#heard');
   if (!mic) return;
   if (stopListening) { stopListening(); return; }
-  mic.classList.add('on');
-  mic.innerHTML = I.stop;
-  mic.setAttribute('aria-label', 'Stop listening');
+  mic.classList.add('on'); mic.innerHTML = I.stop; mic.setAttribute('aria-label', 'Stop listening');
   heard.textContent = 'Listening…';
-  stopListening = listen(state.lang, {
+  stopListening = listen(s.lang, {
     onText: (text) => { heard.textContent = text || 'Listening…'; },
     onEnd: (text, error) => {
       stopListening = null;
-      if (!$('#mic')) return; // sheet was closed
-      mic.classList.remove('on');
-      mic.innerHTML = I.mic;
-      mic.setAttribute('aria-label', 'Start listening');
-      if (text) return addSpoken(text);
+      if (!$('#mic')) return;
+      mic.classList.remove('on'); mic.innerHTML = I.mic; mic.setAttribute('aria-label', 'Start listening');
+      if (text) return addTyped(text, true);
       heard.textContent = speechError(error || 'no-speech');
     },
   });
 }
 
-function addSpoken(text) {
-  const items = parseSpeech(text);
-  if (!items.length) { const h = $('#heard'); if (h) h.textContent = 'Couldn’t catch any items. Try again?'; return; }
-  closeSheet();
-  act(`Added ${items.map((i) => i.name + (fmtQty(i) ? ' ' + fmtQty(i) : '')).join(', ')}`, () => addToList(items));
-  if (tab !== 'list' && tab !== 'home') { tab = 'list'; render(); }
+/** Add free text ("milk, 2 kg rice") to the list, warning about duplicates. */
+function addTyped(text, fromSheet) {
+  const parsed = parseSpeech(text);
+  if (!parsed.length) { const h = $('#heard'); if (h) h.textContent = 'Couldn’t catch any items. Try again?'; return; }
+  if (fromSheet) closeSheet();
+  let res;
+  commit((r) => r.added.length ? `Added ${r.added.map((i) => i.name + (i.qty != null ? ' ' + M.fmtQty(i.qty, i.unit) : '')).join(', ')}` : null,
+    () => (res = M.addItems(s, parsed)));
+  if (res.dupes.length) {
+    const d = res.dupes;
+    const msg = `${d.map((x) => x.name).join(', ')} ${d.length === 1 ? 'is' : 'are'} already on the list${d[0].status === 'claimed' ? ` · ${Who(d[0].by)} is buying` : ''}`;
+    setTimeout(() => toast(msg, { label: 'Add anyway', run: () => commit('Added as a separate item', () => M.addItems(s, parsed.filter((p) => d.some((x) => M.key(x.name) === M.key(p.name))), { force: true })) }), res.added.length ? 1600 : 0);
+  }
+  if (tab !== 'list' && tab !== 'home') { tab = 'list'; listMode = 'active'; render(); }
 }
 
 // ---------- Scan ----------
-const photoInput = $('#photo');
-photoInput.addEventListener('change', async () => {
-  const file = photoInput.files[0];
-  photoInput.value = '';
+const photo = $('#photo');
+photo.addEventListener('change', async () => {
+  const file = photo.files[0];
+  photo.value = '';
   if (!file) return;
   openSheet(`
-    <h2 class="sheet-title">Reading your bill</h2>
+    <h2 class="sheet-title big">Reading your bill</h2>
     <div class="progress"><i id="bar"></i></div>
-    <p class="muted small center" id="scan-label">Getting the bill reader ready…</p>
-    <p class="muted small center">The first scan downloads the reader (about 10 MB) once. Your photo stays on this phone.</p>`);
+    <p class="note plain center" id="scan-label">Getting the bill reader ready…</p>
+    <p class="note plain center">The first scan downloads the reader once (about 10 MB). Your photo stays on this phone.</p>`);
   try {
     const { scanBill } = await import('./scan.js');
     const result = await scanBill(file, (p, label) => {
       const bar = $('#bar'); if (bar) bar.style.width = Math.round(p * 100) + '%';
       const l = $('#scan-label'); if (l) l.textContent = label;
     });
-    if (sheetRoot.hidden) return; // closed while scanning
-    openReview(result);
+    if ($('#sheet-root').hidden) return;
+    reviewSheet(result);
   } catch (err) {
-    openSheet(`<h2 class="sheet-title">Couldn’t read the bill</h2>
-      <p class="muted">${esc(err.message || 'Something went wrong.')}</p>
-      <button class="btn wide" data-action="scan">Try another photo</button>
+    openSheet(`<h2 class="sheet-title big">Couldn’t read the bill</h2><p class="note">${esc(err.message || 'Something went wrong.')}</p>
+      <button class="btn coral wide" data-action="scan">Try another photo</button>
       <button class="btn ghost wide" data-action="bills">Enter the total by hand</button>`);
   }
 });
 
 let review = null;
-function openReview({ items, total, shop }) {
-  review = items.map((i) => ({ ...i, id: uid(), on: i.known }));
+function reviewSheet({ items, total, shop }) {
+  review = items.map((x) => ({ ...x, id: M.uid(), listed: !!M.listMatch(s, x.name) }));
+  review.forEach((x) => { x.on = x.listed || x.known; });
+  const listed = review.filter((x) => x.listed).length;
   openSheet(`
-    <h2 class="sheet-title">Check your bill</h2>
-    <form data-form="review">
+    <h2 class="sheet-title big">Check your bill</h2>
+    <p class="sub">${listed ? `${plural(listed, 'item')} from your list will be marked bought by you.` : 'Ticked items are saved to your bought history.'}</p>
+    <form data-form="review" class="stack">
       <div class="two">
         <label class="field">Shop<input name="shop" value="${esc(shop)}" placeholder="Shop name" maxlength="40"></label>
         <label class="field">Total ₹<input name="total" inputmode="decimal" value="${total ?? ''}" placeholder="0"></label>
       </div>
-      ${review.length ? `
-        <p class="hint">Untick anything that isn’t food or home stock.</p>
-        <ul class="rows review">${review.map((i) => `
-          <li><label class="row check-row">
-            <input type="checkbox" data-review="${i.id}" ${i.on ? 'checked' : ''}>
-            <span class="row-main"><span class="row-name">${esc(i.name)}</span></span>
-            <span class="row-qty">${i.price != null ? rupees(i.price) : ''}</span>
-          </label></li>`).join('')}
-        </ul>` : '<p class="muted">No items could be read clearly. You can still save the total.</p>'}
-      <button class="btn wide">${review.length ? 'Add to kitchen' : 'Save total'}</button>
-    </form>`);
+      ${review.length ? `<ul class="rows">${review.map((x) => `<li><label class="row check-row">
+        <input type="checkbox" data-review="${x.id}" ${x.on ? 'checked' : ''}>
+        <span class="row-main static"><b>${esc(x.name)}</b>${x.listed ? '<span class="meta on-list">On your list</span>' : ''}</span>
+        <span class="muted">${x.price != null ? rupees(x.price) : ''}</span></label></li>`).join('')}</ul>`
+      : '<p class="note">No items could be read clearly. You can still save the total.</p>'}
+      <button class="btn coral wide">${listed ? 'Mark bought & save bill' : 'Save bill'}</button>
+    </form>`, { tall: true });
 }
 
-// ---------- Dish picker ----------
-function openDishPicker(date, slot) {
-  const current = (state.meals[date] || {})[slot];
-  const names = [
-    ...DISHES.filter((d) => d.slots.includes(slot)).map((d) => d.name),
-    ...state.dishes,
-    ...DISHES.filter((d) => !d.slots.includes(slot)).map((d) => d.name),
-  ];
-  const unique = [...new Set(names)];
-  const draw = (q) => {
-    const k = key(q);
-    const hits = unique.filter((n) => !k || key(n).includes(k)).slice(0, 40);
-    const exact = unique.some((n) => key(n) === k);
-    // Matching dishes first; "Add …" for a new dish goes last.
-    return `
-      ${hits.map((n) => `<li><button class="pick ${n === current ? 'on' : ''}" data-action="set-dish" data-name="${esc(n)}">${esc(n)}</button></li>`).join('')}
-      ${k && !exact ? `<li><button class="pick add" data-action="set-dish" data-name="${esc(q.trim())}">${I.plus} Add “${esc(q.trim())}” as a new dish</button></li>` : ''}`;
-  };
-  openSheet(`
-    <h2 class="sheet-title">${STR.slots[slot]} · ${dayLabel(date)}</h2>
-    <input class="search" id="dish-q" placeholder="Search or type a dish… e.g. appam" autocomplete="off" aria-label="Search dishes">
-    <ul class="picks" id="dish-list" data-date="${date}" data-slot="${slot}">${draw('')}</ul>
-    ${current ? `<button class="btn ghost wide" data-action="set-dish" data-name="">Clear ${STR.slots[slot].toLowerCase()}</button>` : ''}`, {
-    onMount: (sheet) => {
-      const q = $('#dish-q', sheet);
-      q.addEventListener('input', () => { $('#dish-list').innerHTML = draw(q.value); });
-      q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#dish-list .pick')?.click(); } });
-    },
-  });
-}
+// ---------- Actions ----------
+const byId = (arr, id) => arr.find((x) => x.id === id);
+const after = (el, fn) => { if (el.dataset.keep) fn?.(); else if (el.dataset.close) closeSheet(); };
 
-function setDish(name) {
-  const list = $('#dish-list');
-  const { date, slot } = list.dataset;
-  const dayMeals = state.meals[date] || (state.meals[date] = {});
-  if (name) {
-    dayMeals[slot] = name;
-    if (!DISHES.some((d) => key(d.name) === key(name)) && !state.dishes.some((d) => key(d) === key(name))) state.dishes.push(name);
-  } else {
-    delete dayMeals[slot];
-  }
-  closeSheet();
-  persist();
-}
-
-function missingIngredients() {
-  const needed = new Set();
-  for (let i = 0; i < 7; i++) {
-    const m = state.meals[addDays(today(), i)] || {};
-    for (const dish of Object.values(m)) {
-      DISHES.find((d) => key(d.name) === key(dish))?.need.forEach((n) => needed.add(n));
-    }
-  }
-  if (!needed.size) return toast('Plan a few meals first, then tap this again.');
-  const missing = [...needed].filter((n) => { const s = inStock(n); return (!s || s.level === 'out') && !inList(n); });
-  if (!missing.length) return toast('You have everything for this week’s meals.');
-  act(`Added ${plural(missing.length, 'item')} to your list`, () => addToList(missing.map((name) => ({ name }))));
-}
-
-// ---------- Item / stock / task editors ----------
-function openItemEdit(id) {
-  const it = state.list.find((i) => i.id === id);
-  if (!it) return;
-  openSheet(`
-    <h2 class="sheet-title">${esc(it.name)}</h2>
-    <form data-form="item" data-id="${id}">
-      <label class="field">Name<input name="name" value="${esc(it.name)}" maxlength="40" required></label>
-      <div class="two">
-        <label class="field">Quantity<input name="qty" inputmode="decimal" value="${it.qty ?? ''}" placeholder="optional"></label>
-        <label class="field">Unit<select name="unit">
-          ${['', 'kg', 'g', 'L', 'ml', 'pcs', 'pkt', 'dozen', 'bottle'].map((u) => `<option ${u === (it.unit || '') ? 'selected' : ''} value="${u}">${u || '—'}</option>`).join('')}
-        </select></label>
-      </div>
-      <button class="btn wide">Save</button>
-    </form>`);
-}
-
-function openStockEdit(id) {
-  const s = state.stock.find((x) => x.id === id);
-  if (!s) return;
-  openSheet(`
-    <h2 class="sheet-title">${esc(s.name)}</h2>
-    <p class="muted small">Updated ${new Date(s.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</p>
-    ${inList(s.name) ? '' : `<button class="btn wide" data-action="stock-to-list" data-id="${id}">${I.list} Add to shopping list</button>`}
-    <button class="btn ghost wide danger" data-action="stock-remove" data-id="${id}">Remove from kitchen</button>`);
-}
-
-function openTaskEdit(id) {
-  const x = state.tasks.find((t) => t.id === id);
-  if (!x) return;
-  openSheet(`
-    <h2 class="sheet-title">Task</h2>
-    <form data-form="task-edit" data-id="${id}">
-      <label class="field">What<input name="title" value="${esc(x.title)}" maxlength="80" required></label>
-      <div class="two">
-        <label class="field">Who <span class="muted">(optional)</span><input name="who" value="${esc(x.who)}" placeholder="Amma, Arun…" maxlength="24"></label>
-        <label class="field">When<input name="due" type="date" value="${x.due}"></label>
-      </div>
-      <div class="chips" role="radiogroup" aria-label="Repeat">
-        ${Object.entries(STR.repeat).map(([r, label]) => `<label class="chip radio"><input type="radio" name="repeat" value="${r}" ${x.repeat === r ? 'checked' : ''}>${label}</label>`).join('')}
-      </div>
-      <button class="btn wide">Save</button>
-    </form>
-    <button class="btn ghost wide danger" data-action="task-remove" data-id="${id}">Delete task</button>`);
-}
-
-// ---------- Bills & settings ----------
-function openBills() {
-  const bills = [...state.bills].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 40);
-  openSheet(`
-    <h2 class="sheet-title">Bills</h2>
-    ${bills.length ? `<ul class="rows">${bills.map((b) => `
-      <li class="row">
-        <span class="row-main"><span class="row-name">${esc(b.shop || 'Bill')}</span>
-          <span class="row-meta">${new Date(b.date + 'T12:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}${b.count ? ' · ' + plural(b.count, 'item') : ''}</span></span>
-        <span class="row-qty strong">${rupees(b.total)}</span>
-        <button class="icon-btn quiet" data-action="bill-remove" data-id="${b.id}" aria-label="Delete bill">${I.x}</button>
-      </li>`).join('')}</ul>` : '<p class="muted">No bills yet. Scan one, or add a total below.</p>'}
-    <form data-form="bill-add" class="two add-bill">
-      <input name="shop" placeholder="Shop (optional)" maxlength="40" aria-label="Shop">
-      <input name="total" inputmode="decimal" placeholder="₹ Amount" required aria-label="Amount">
-      <button class="btn">Add bill</button>
-    </form>`);
-}
-
-function openSettings() {
-  openSheet(`
-    <h2 class="sheet-title">Settings</h2>
-    <form data-form="settings">
-      <label class="field">Home name<input name="home" value="${esc(state.home)}" maxlength="30"></label>
-      <p class="field">Voice language</p>
-      <div class="chips">
-        ${Object.entries(STR.langs).map(([code, label]) => `<label class="chip radio"><input type="radio" name="lang" value="${code}" ${state.lang === code ? 'checked' : ''}>${label}</label>`).join('')}
-      </div>
-      <button class="btn wide">Save</button>
-    </form>
-    <div class="settings-list">
-      <button class="btn ghost wide" data-action="backup">Download a backup</button>
-      <button class="btn ghost wide" data-action="restore">Restore from backup</button>
-      <button class="btn ghost wide danger" data-action="reset">Clear everything</button>
-    </div>
-    <p class="muted small center">Homzy keeps your data on this phone only.</p>`);
-}
-
-// ---------- Event handling ----------
 const ACTIONS = {
-  tab: (el) => { tab = el.dataset.tab; try { localStorage.setItem('homzy:tab', tab); } catch { /* ignore */ } render(); window.scrollTo(0, 0); },
-  scan: () => { closeSheet(); photoInput.click(); },
-  speak: () => openSpeak(),
-  settings: () => openSettings(),
+  tab: (el) => { tab = el.dataset.tab; setPref('tab', tab); closeSheet(); render(); scrollTo(0, 0); },
   'close-sheet': () => closeSheet(),
-  undo: () => { const t = $('#toast'); const fn = t._undo; t.hidden = true; t._undo = null; fn?.(); },
+  'toast-action': () => runToastAction(),
+  scan: () => { closeSheet(); photo.click(); },
+  speak: () => speakSheet(),
+  switch: () => switchSheet(),
+  be: (el) => {
+    s.me = el.dataset.id; persist();
+    toast(`Using Homzy as ${me().name}`);
+    if (el.dataset.close) closeSheet();
+  },
   lang: (el) => {
-    state.lang = el.dataset.lang; save(state);
-    document.querySelectorAll('[data-action="lang"]').forEach((b) => { const on = b === el; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
-    stopListening?.(); setTimeout(startListening, 250);
+    s.lang = el.dataset.lang; M.save(s);
+    $$('[data-action="lang"]').forEach((b) => b.classList.toggle('on', b === el));
+    stopListening?.(); setTimeout(startListening, 300);
   },
-  starter: () => act(`Added ${STARTER.length} basics to your kitchen`, () => STARTER.forEach((n) => { if (!inStock(n)) setStock(n, 'full'); })),
 
-  bought: (el) => {
-    const it = state.list.find((i) => i.id === el.dataset.id);
-    if (!it) return;
-    act(`Bought ${it.name}`, () => { state.list = state.list.filter((i) => i !== it); setStock(it.name, 'full', it.cat); });
+  // setup
+  step: (el) => {
+    const box = el.closest('[data-stepper]');
+    const input = box.querySelector('input');
+    const v = Math.max(1, Math.min(20, (+input.value || 4) + +el.dataset.d));
+    input.value = v; box.querySelector('output').textContent = plural(v, 'person', 'people');
   },
-  'remove-item': (el) => {
-    const it = state.list.find((i) => i.id === el.dataset.id);
-    if (it) act(`Removed ${it.name}`, () => { state.list = state.list.filter((i) => i !== it); });
+  'setup-back': () => { setupStep = 1; render(); },
+  'setup-remove': (el) => { setupDraft.others.splice(+el.dataset.i, 1); render(); },
+  'setup-finish': () => {
+    const d = setupDraft;
+    s = M.fresh();
+    s.home = { name: d.home.trim() || 'Our home', people: d.people };
+    const self = M.addMember(s, d.name);
+    s.me = self.id;
+    d.others.forEach((n) => M.addMember(s, n));
+    const all = M.allRecipes(s);
+    s.favs = d.dinners.map((n) => all.find((r) => r.name === n)?.id).filter(Boolean);
+    s.setup = true;
+    tab = 'home'; setPref('tab', tab);
+    persist();
+    toast(`Welcome home, ${self.name}`);
   },
-  'edit-item': (el) => openItemEdit(el.dataset.id),
+
+  // meals
+  slot: (el) => { planSlot = el.dataset.slot; setPref('slot', planSlot); render(); },
+  pick: (el) => pickSheet(el.dataset.date, el.dataset.slot),
+  meal: (el) => mealSheet(el.dataset.date, el.dataset.slot),
+  'quick-meal': (el) => { commit(null, () => M.setMeal(s, today(), 'd', el.dataset.rid)); mealSheet(today(), 'd'); },
+  'set-meal': (el) => {
+    const { date, slot } = $('#pick-list').dataset;
+    const prev = M.mealAt(s, date, slot);
+    const fromMeal = prev && s.items.some((i) => i.meal && i.meal === M.recipe(s, prev.rid)?.name);
+    commit(fromMeal ? 'Meal changed. Items already on the list were kept.' : null, () => M.setMeal(s, date, slot, el.dataset.rid));
+    mealSheet(date, slot);
+  },
+  'new-meal': (el) => { const { date, slot } = $('#pick-list').dataset; recipeSheet(null, { name: el.dataset.name, date, slot }); },
+  'clear-meal': () => {
+    const { date, slot } = $('#pick-list').dataset;
+    closeSheet();
+    commit('Meal cleared. Shopping already added stays on the list.', () => M.setMeal(s, date, slot, null));
+  },
+  'meal-people': (el) => {
+    const m = M.mealAt(s, checkCtx.date, checkCtx.slot);
+    M.setPeople(s, checkCtx.date, checkCtx.slot, m.people + +el.dataset.d);
+    M.save(s); render(); drawCheckSheet(true);
+  },
+  'check-week': () => checkWeekSheet(),
+  'copy-week': () => {
+    commit((n) => n ? `Copied ${plural(n, 'meal')} from last week` : 'This week is already planned', () => M.copyLastWeek(s, today()));
+  },
+  hnc: (el) => {
+    const row = checkCtx.rows[+el.dataset.i];
+    M.setCheck(s, row.sources, row.name, el.dataset.st);
+    M.save(s); drawCheckSheet(true); render();
+  },
+  'all-have': () => {
+    for (const row of checkCtx.rows) if (!row.onList && row.state !== 'need') M.setCheck(s, row.sources, row.name, 'have');
+    M.save(s); drawCheckSheet(true); render();
+  },
+  'add-needs': () => {
+    const need = checkCtx.rows.filter((x) => x.state === 'need' && !x.onList);
+    const mealName = checkCtx.single ? M.recipe(s, M.mealAt(s, checkCtx.date, checkCtx.slot).rid).name : null;
+    commit((r) => `Added ${r.added.map((i) => i.name).join(', ')} to the list`,
+      () => M.addItems(s, need.map((x) => ({ name: x.name, qty: x.qty, unit: x.unit })), { meal: mealName }));
+    drawCheckSheet(true);
+  },
+
+  // list
+  'list-mode': (el) => { listMode = el.dataset.mode; render(); },
+  'quick-add': (el) => addTyped(el.dataset.name),
+  item: (el) => itemSheet(el.dataset.id),
+  claim: (el) => { const i = byId(s.items, el.dataset.id); commit(`You’re buying ${i.name}`, () => M.claim(s, i.id)); after(el, () => itemSheet(i.id)); },
+  release: (el) => { const i = byId(s.items, el.dataset.id); commit(`${i.name} is open for anyone again`, () => M.release(s, i.id)); after(el, () => itemSheet(i.id)); },
+  assign: (el) => { const i = byId(s.items, el.dataset.id); commit(`Asked ${M.firstName(s, el.dataset.m)} to buy ${i.name}`, () => M.assign(s, i.id, el.dataset.m)); itemSheet(i.id); },
+  'item-accept': (el) => { const i = byId(s.items, el.dataset.id); commit(`You’re buying ${i.name}`, () => M.acceptItem(s, i.id)); after(el, () => itemSheet(i.id)); },
+  'item-decline': (el) => { const i = byId(s.items, el.dataset.id); commit(`${i.name} is open for anyone`, () => M.declineItem(s, i.id)); after(el, () => itemSheet(i.id)); },
+  'quick-buy': (el) => { const i = byId(s.items, el.dataset.id); commit(`${i.name} marked bought`, () => M.buy(s, i.id)); },
+  'item-remove': (el) => { const i = byId(s.items, el.dataset.id); closeSheet(); commit(`Removed ${i.name}`, () => M.removeItem(s, i.id)); },
+  restore: (el) => { const b = byId(s.bought, el.dataset.id); commit(`${b.name} is back on the list`, () => M.restore(s, b.id)); },
   'share-list': () => {
-    const text = `🛒 ${state.home} shopping list\n` + state.list.map((i) => `• ${i.name}${fmtQty(i) ? ' – ' + fmtQty(i) : ''}`).join('\n');
+    const text = `🛒 ${s.home.name} – shopping list\n` + sortItems(s.items).map((i) => `• ${i.name}${i.qty != null ? ' – ' + M.fmtQty(i.qty, i.unit) : ''}${i.status === 'claimed' ? ` (${M.firstName(s, i.by)} is buying)` : ''}`).join('\n');
     if (navigator.share) navigator.share({ text }).catch(() => {});
     else window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
   },
 
-  kfilter: (el) => { kitchenFilter = el.dataset.f; render(); },
-  level: (el) => {
-    const s = state.stock.find((x) => x.id === el.dataset.id);
-    const level = el.dataset.level;
-    if (!s || s.level === level) return;
-    if (level === 'out' && !inList(s.name)) {
-      act(`${s.name} added to your list`, () => { s.level = 'out'; s.at = Date.now(); addToList([{ name: s.name, cat: s.cat }]); });
-    } else {
-      s.level = level; s.at = Date.now(); persist();
-    }
-  },
-  'stock-edit': (el) => openStockEdit(el.dataset.id),
-  'stock-to-list': (el) => {
-    const s = state.stock.find((x) => x.id === el.dataset.id);
-    closeSheet();
-    if (s) act(`${s.name} added to your list`, () => addToList([{ name: s.name, cat: s.cat }]));
-  },
-  'stock-remove': (el) => {
-    const s = state.stock.find((x) => x.id === el.dataset.id);
-    closeSheet();
-    if (s) act(`Removed ${s.name}`, () => { state.stock = state.stock.filter((x) => x !== s); });
-  },
-  'low-one': (el) => {
-    const s = state.stock.find((x) => x.id === el.dataset.id);
-    if (s) act(`${s.name} added to your list`, () => addToList([{ name: s.name, cat: s.cat }]));
-  },
-  'low-to-list': () => {
-    const low = state.stock.filter((s) => s.level !== 'full' && !inList(s.name));
-    act(`Added ${plural(low.length, 'item')} to your list`, () => addToList(low.map((s) => ({ name: s.name, cat: s.cat }))));
-  },
+  // tasks
+  'task-new': (el) => taskSheet(null, { title: el.dataset.title }),
+  'task-idea': (el) => { const f = el.closest('form'); f.title.value = el.dataset.title; f.title.focus(); },
+  task: (el) => taskSheet(el.dataset.id),
+  'task-take': (el) => { const t = byId(s.tasks, el.dataset.id); commit(`You’ll ${t.title.toLowerCase()}`, () => M.takeTask(s, t.id)); after(el); },
+  'task-accept': (el) => { const t = byId(s.tasks, el.dataset.id); commit(`Accepted: ${t.title}`, () => M.acceptTask(s, t.id)); after(el); },
+  'task-decline': (el) => { const t = byId(s.tasks, el.dataset.id); commit('Okay. It’s open for anyone now.', () => M.declineTask(s, t.id)); after(el); },
+  'task-release': (el) => { const t = byId(s.tasks, el.dataset.id); commit('Released for anyone', () => M.releaseTask(s, t.id)); after(el); },
+  'task-done': (el) => { const t = byId(s.tasks, el.dataset.id); commit(`Done: ${t.title}`, () => M.finishTask(s, t.id)); after(el); },
+  'task-remove': (el) => { const t = byId(s.tasks, el.dataset.id); closeSheet(); commit('Task deleted', () => M.removeTask(s, t.id)); },
 
-  'pick-dish': (el) => openDishPicker(el.dataset.date, el.dataset.slot),
-  'set-dish': (el) => setDish(el.dataset.name),
-  'plan-day': (el) => { planDay = el.dataset.date; render(); },
-  missing: () => missingIngredients(),
-
-  'task-done': (el) => {
-    const x = state.tasks.find((t) => t.id === el.dataset.id);
-    if (!x) return;
-    act(`Done: ${x.title}`, () => {
-      if (x.repeat === 'none') x.done = true;
-      else x.due = addDays(x.due > today() ? x.due : today(), x.repeat === 'daily' ? 1 : 7);
-    });
-  },
-  'task-edit': (el) => openTaskEdit(el.dataset.id),
-  'task-remove': (el) => {
-    const x = state.tasks.find((t) => t.id === el.dataset.id);
-    closeSheet();
-    if (x) act('Task deleted', () => { state.tasks = state.tasks.filter((t) => t !== x); });
-  },
-
-  bills: () => openBills(),
-  'bill-remove': (el) => {
-    const b = state.bills.find((x) => x.id === el.dataset.id);
-    if (!b) return;
-    closeSheet();
-    act(`Deleted ${rupees(b.total)} bill`, () => { state.bills = state.bills.filter((x) => x !== b); });
-  },
+  // family & recipes
+  'member-remove': (el) => { const m = M.member(s, el.dataset.id); commit(`Removed ${m.name}. Their claims are open again.`, () => M.removeMember(s, m.id)); },
+  recipe: (el) => recipeSheet(el.dataset.id),
+  'recipe-new': () => recipeSheet(null),
+  fav: (el) => { const r = M.recipe(s, el.dataset.id); commit(s.favs.includes(r.id) ? `Removed ${r.name} from favourites` : `Saved ${r.name}`, () => M.toggleFav(s, r.id)); after(el); },
+  settings: () => settingsSheet(),
+  bills: () => billsSheet(),
+  'bill-remove': (el) => { const b = byId(s.bills, el.dataset.id); closeSheet(); commit(`Deleted ${rupees(b.total)} bill`, () => { s.bills = s.bills.filter((x) => x !== b); }); },
   backup: () => {
-    const blob = new Blob([JSON.stringify(state, null, 1)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(s, null, 1)], { type: 'application/json' });
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `homzy-backup-${today()}.json` });
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    toast('Backup downloaded. Keep it private.');
+    toast('Backup downloaded. Keep it private: it has your household data.');
   },
-  restore: () => $('#restore').click(),
-  reset: () => { closeSheet(); act('Everything cleared', () => { const { home, lang } = state; state = { ...fresh(), home, lang }; }); },
+  'restore-file': () => $('#restore').click(),
+  reset: () => {
+    openSheet(`<h2 class="sheet-title big">Delete this home?</h2>
+      <p class="note">This removes all lists, plans, tasks and bills from this phone. Download a backup first if you might need them.</p>
+      <div class="btn-row"><button class="btn ghost" data-action="close-sheet">Keep it</button><button class="btn danger-fill" data-action="reset-yes">Delete</button></div>`);
+  },
+  'reset-yes': () => { closeSheet(); s = M.fresh(); setupStep = 1; setupDraft = { home: 'Our home', name: '', people: 4, dinners: SETUP_DINNERS.slice(0, 3), others: [] }; persist(); },
 };
 
 document.addEventListener('click', (e) => {
+  if (e.target.closest('#mic')) return startListening();
   const el = e.target.closest('[data-action]');
   if (!el) return;
   const fn = ACTIONS[el.dataset.action];
   if (fn) { e.preventDefault(); fn(el); }
 });
 
-// Mic button inside the speak sheet
-document.addEventListener('click', (e) => { if (e.target.closest('#mic')) startListening(); });
-
-// Review checkboxes
 document.addEventListener('change', (e) => {
   const id = e.target.dataset?.review;
   if (id && review) { const r = review.find((x) => x.id === id); if (r) r.on = e.target.checked; }
 });
 
+const num = (v) => { const n = parseFloat(String(v ?? '').replace(/[^\d.]/g, '')); return Number.isFinite(n) ? n : null; };
+
 const FORMS = {
-  'list-add': (f, data) => {
-    const items = parseSpeech(data.text);
-    if (!items.length) return;
-    act(`Added ${items.map((i) => i.name).join(', ')}`, () => addToList(items));
-    setTimeout(() => $('[data-form="list-add"] input')?.focus(), 0);
+  setup1: (f, d) => {
+    setupDraft = { ...setupDraft, home: d.home, name: d.name.trim(), people: +d.people || 4, dinners: new FormData(f).getAll('dinner') };
+    if (!setupDraft.name) return;
+    setupStep = 2; render();
+    setTimeout(() => $('[data-form="setup-add"] input')?.focus(), 50);
   },
-  'stock-add': (f, data) => {
-    const items = parseSpeech(data.text);
-    if (!items.length) return;
-    act(`Added ${items.map((i) => i.name).join(', ')} to kitchen`, () => items.forEach((i) => setStock(i.name, 'full', i.cat)));
-    setTimeout(() => $('[data-form="stock-add"] input')?.focus(), 0);
+  'setup-add': (f, d) => {
+    const n = d.name.trim();
+    if (n && !setupDraft.others.includes(n)) setupDraft.others.push(n);
+    render();
+    setTimeout(() => $('[data-form="setup-add"] input')?.focus(), 30);
   },
-  'speak-type': (f, data) => { if (data.text.trim()) addSpoken(data.text); },
-  task: (f, data) => {
-    const title = data.title.trim();
-    if (!title) return;
-    state.tasks.push({ id: uid(), title, who: '', repeat: 'none', due: tab === 'plan' ? planDay : today(), done: false });
-    persist();
-    setTimeout(() => $('[data-form="task"] input')?.focus(), 0);
+  'member-add': (f, d) => {
+    const n = d.name.trim();
+    if (!n) return;
+    commit(`Added ${n}`, () => M.addMember(s, n));
+    if ($('.sheet')) switchSheet();
   },
-  'task-edit': (f, data) => {
-    const x = state.tasks.find((t) => t.id === f.dataset.id);
-    if (!x) return;
-    Object.assign(x, { title: data.title.trim() || x.title, who: data.who.trim(), due: data.due || today(), repeat: data.repeat || 'none' });
-    closeSheet(); persist();
-  },
-  item: (f, data) => {
-    const it = state.list.find((i) => i.id === f.dataset.id);
-    if (!it) return;
-    const qty = parseFloat(data.qty);
-    Object.assign(it, { name: data.name.trim() || it.name, qty: Number.isFinite(qty) && qty > 0 ? qty : null, unit: data.unit || null });
-    it.cat = catOf(it.name);
-    closeSheet(); persist();
-  },
-  review: (f, data) => {
-    const picked = (review || []).filter((r) => r.on);
-    const total = parseFloat(String(data.total).replace(/[^\d.]/g, ''));
+  'list-add': (f, d) => { if (d.text.trim()) addTyped(d.text); setTimeout(() => $('[data-form="list-add"] input')?.focus(), 30); },
+  'speak-type': (f, d) => { if (d.text.trim()) addTyped(d.text, true); },
+  buy: (f, d) => {
+    const i = byId(s.items, f.dataset.id);
+    if (!i) return;
+    const qty = num(d.qty), price = num(d.price);
     closeSheet();
-    act(`${picked.length ? `Kitchen updated (${plural(picked.length, 'item')})` : 'Bill saved'}${total ? ' · ' + rupees(total) : ''}`, () => {
-      for (const r of picked) {
-        setStock(r.name, 'full', r.cat);
-        state.list = state.list.filter((i) => key(i.name) !== key(r.name));
-      }
-      if (total > 0) state.bills.push({ id: uid(), date: today(), shop: data.shop.trim(), total, count: picked.length });
+    commit((r) => r.partial ? `Recorded part. ${M.fmtQty(r.left, i.unit)} of ${i.name} is still on the list.` : `${i.name} marked bought`,
+      () => M.buy(s, i.id, { qty: qty ?? undefined, price }));
+  },
+  'item-edit': (f, d) => {
+    const i = byId(s.items, f.dataset.id);
+    const q = num(d.qty);
+    closeSheet();
+    commit('Item updated', () => M.updateItem(s, i.id, { name: d.name.trim() || i.name, qty: q > 0 ? q : null, unit: d.unit || null, note: d.note.trim() }));
+  },
+  task: (f, d) => {
+    const data = { title: d.title.trim(), due: d.due || today(), time: d.time || '', assignee: d.assignee || null, repeat: d.repeat || 'none' };
+    if (!data.title) return;
+    closeSheet();
+    if (f.dataset.id) commit('Task updated', () => M.updateTask(s, f.dataset.id, data));
+    else commit(!data.assignee ? 'Shared with everyone' : data.assignee === s.me ? 'Added to your day' : `Request sent to ${M.firstName(s, data.assignee)}`, () => M.addTask(s, data));
+  },
+  recipe: (f, d) => {
+    const ing = String(d.ing || '').split('\n').map((l) => l.trim()).filter(Boolean).map(M.parseIng);
+    const slots = new FormData(f).getAll('slots').join('') || 'd';
+    const data = { name: d.name.trim(), mins: num(d.mins), veg: d.veg !== '0', slots, ing };
+    if (!data.name) return;
+    const { date, slot } = f.dataset;
+    let r;
+    commit(f.dataset.id ? 'Recipe saved' : 'Your family recipe is saved', () => {
+      r = M.saveRecipe(s, data, f.dataset.id);
+      if (date) M.setMeal(s, date, slot, r.id);
     });
+    if (date) mealSheet(date, slot); else closeSheet();
+  },
+  review: (f, d) => {
+    const lines = (review || []).filter((x) => x.on).map(({ name, cat, price }) => ({ name, cat, price }));
+    const total = num(d.total);
+    closeSheet();
+    commit((n) => `${n ? `${plural(n, 'item')} marked bought · ` : ''}${total ? rupees(total) + ' bill saved' : 'Saved'}`,
+      () => M.saveBill(s, { shop: d.shop.trim(), total, lines }));
     review = null;
   },
-  'bill-add': (f, data) => {
-    const total = parseFloat(String(data.total).replace(/[^\d.]/g, ''));
+  bill: (f, d) => {
+    const total = num(d.total);
     if (!(total > 0)) return;
     closeSheet();
-    act(`Saved ${rupees(total)} bill`, () => state.bills.push({ id: uid(), date: today(), shop: data.shop.trim(), total, count: 0 }));
+    commit(`Saved ${rupees(total)} bill`, () => M.saveBill(s, { shop: d.shop.trim(), total, lines: [] }));
   },
-  settings: (f, data) => {
-    state.home = data.home.trim() || 'Our home';
-    state.lang = data.lang || state.lang;
-    closeSheet(); persist(); toast('Settings saved');
+  settings: (f, d) => {
+    closeSheet();
+    commit('Settings saved', () => {
+      s.home.name = d.home.trim() || 'Our home';
+      s.home.people = +d.people || s.home.people;
+      s.lang = d.lang || s.lang;
+    });
   },
 };
 
@@ -776,8 +1020,7 @@ document.addEventListener('submit', (e) => {
   const f = e.target.closest('[data-form]');
   if (!f) return;
   e.preventDefault();
-  const fn = FORMS[f.dataset.form];
-  if (fn) fn(f, Object.fromEntries(new FormData(f)));
+  FORMS[f.dataset.form]?.(f, Object.fromEntries(new FormData(f)));
 });
 
 $('#restore').addEventListener('change', async (e) => {
@@ -786,45 +1029,36 @@ $('#restore').addEventListener('change', async (e) => {
   if (!file) return;
   try {
     if (file.size > 5_000_000) throw new Error('too big');
-    const next = fromBackup(await file.text());
-    closeSheet();
-    act('Backup restored', () => { state = next; });
+    const next = M.fromBackup(await file.text());
+    commit('Backup restored', () => { s = next; });
   } catch {
     toast('That file isn’t a Homzy backup.');
   }
 });
 
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
-
-// Catalog suggestions for the add boxes
 $('#catalog').innerHTML = CATALOG.map((c) => `<option value="${esc(c.name)}">`).join('');
 
 // ---------- Install & offline ----------
 let installEvent = null;
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; $('#install').hidden = false; });
-$('#install').addEventListener('click', async () => {
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; document.body.classList.add('can-install'); });
+ACTIONS.install = async () => {
   if (!installEvent) return;
   installEvent.prompt();
   await installEvent.userChoice.catch(() => {});
   installEvent = null;
-  $('#install').hidden = true;
-});
-window.addEventListener('appinstalled', () => { $('#install').hidden = true; toast('Homzy is on your home screen'); });
-
-if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
-}
-
-// Refresh "today" if the app stays open past midnight or comes back from background.
+  document.body.classList.remove('can-install');
+};
+window.addEventListener('appinstalled', () => { document.body.classList.remove('can-install'); toast('Homzy is on your home screen'); });
+if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
 
 render();
 
 // Home-screen shortcuts: ?do=speak / ?do=scan
 const shortcut = new URLSearchParams(location.search).get('do');
-if (shortcut) {
+if (shortcut && s.setup) {
   history.replaceState(null, '', location.pathname);
-  if (shortcut === 'speak') openSpeak();
-  // Browsers only open the photo picker after a tap, so ask for one.
-  if (shortcut === 'scan') openSheet(`<h2 class="sheet-title">Scan a bill</h2><button class="btn wide" data-action="scan">${I.camera} Take or choose a photo</button>`);
+  if (shortcut === 'speak') speakSheet();
+  if (shortcut === 'scan') openSheet(`<h2 class="sheet-title big">Scan a bill</h2><button class="btn coral wide" data-action="scan">${I.camera} Take or choose a photo</button>`);
 }
