@@ -117,9 +117,9 @@ function setupView() {
           <button class="btn coral wide">Continue</button>
         </form>
         ${C.configured() ? `<div class="card info">
-          <b>Already on Homzy, or got an invite?</b>
-          <p>Sign in to see your family’s home on this phone.</p>
-          <button class="btn ghost wide" data-action="sync-signin">Sign in or join</button>
+          <b>Family already uses Homzy?</b>
+          <p>Ask them for your QR code (Family → Connect next to your name) and scan it with this phone’s camera.</p>
+          <button class="btn ghost wide" data-action="sync-join-start">${I.qr} I have a QR code</button>
         </div>` : ''}
       </div>`;
   }
@@ -137,7 +137,7 @@ function setupView() {
           <button class="add-btn" aria-label="Add">${I.plus}</button>
         </form>
       </div>
-      <p class="note">Everyone can tap their name on this phone to claim shopping and accept tasks.${C.configured() ? ' To use Homzy on everyone’s own phone, turn on family sync in the Family tab.' : ''}</p>
+      <p class="note">Everyone can tap their name on this phone to claim shopping and accept tasks.${C.configured() ? ' To put Homzy on everyone’s own phone, tap Connect next to their name in the Family tab.' : ''}</p>
       <button class="btn coral wide" data-action="setup-finish">Create our home</button>
     </div>`;
 }
@@ -369,7 +369,7 @@ function listView() {
       ${claimed.length ? `${section('Claimed')}<ul class="card rows">${claimed.map(itemRow).join('')}</ul>
         <p class="note plain">Claimed items stay visible until someone marks them bought.</p>` : ''}
       ${!s.items.length ? `<div class="empty"><p class="empty-title">Nothing to buy</p><p>Tap <b>Speak</b> and say what you need, or tap a chip above.</p></div>`
-        : `<p class="note">Tap “I’ll buy” to take it on. Everyone can see who is buying.</p>
+        : `${viewOnly() ? '' : '<p class="note">Tap “I’ll buy” to take it on. Everyone can see who is buying.</p>'}
            <button class="btn ghost wide" data-action="share-list">${I.share} Share list on WhatsApp</button>`}
     ` : boughtView()}`;
 }
@@ -420,7 +420,8 @@ function familyView() {
         return `<li class="row">
           ${avatar(m)}
           <span class="row-main static"><b>${esc(m.name)}${m.id === s.me ? ' <span class="tag">You</span>' : ''}</b>
-            <span class="meta">${[buying && `Buying ${buying}`, doing && plural(doing, 'task')].filter(Boolean).join(' · ') || 'Nothing taken on'}</span></span>
+            <span class="meta">${[memberPhoneMeta(m), buying && `Buying ${buying}`, doing && plural(doing, 'task')].filter(Boolean).join(' · ') || 'Nothing taken on'}</span></span>
+          ${memberConnect(m)}
           ${m.id !== s.me ? `<button class="icon-btn quiet" data-action="member-remove" data-id="${m.id}" aria-label="Remove ${esc(m.name)}">${I.x}</button>` : ''}
         </li>`;
       }).join('')}
@@ -448,8 +449,7 @@ function familyView() {
       <button class="menu-row" data-action="settings">Home name, portions & voice ${I.chev}</button>
       <button class="menu-row" data-action="backup">Download a backup ${I.chev}</button>
       ${viewOnly() ? '' : `<button class="menu-row" data-action="restore-file">Restore from backup ${I.chev}</button>`}
-      ${S.linked() ? `<button class="menu-row" data-action="sync-signout">Sign out of this phone ${I.chev}</button>`
-        : `<button class="menu-row danger" data-action="reset">Delete this home’s data ${I.chev}</button>`}
+      ${S.linked() ? '' : `<button class="menu-row danger" data-action="reset">Delete this home’s data ${I.chev}</button>`}
     </div>
 
     ${section('Help us improve')}
@@ -457,7 +457,7 @@ function familyView() {
       <button class="menu-row" data-action="feedback">Send feedback or report a problem ${I.chev}</button>
     </div>
     <p class="note plain center">${S.linked()
-      ? 'Your home is saved online so your family can see it on their phones. Only people you invite can open it.'
+      ? 'Your home is saved online so your family can see it on their phones. Only phones that scanned your QR codes can open it.'
       : 'Your lists, meals and bills stay on this phone. Only feedback you choose to send is uploaded.'}</p>`;
 }
 
@@ -1017,18 +1017,19 @@ function reviewSheet({ items, total, shop }) {
     </form>`, { tall: true });
 }
 
-// ---------- Family sync: sign in, invite, who has access ----------
+// ---------- Family sync: connect phones with a QR code ----------
+// No email or password. The first phone shares the home; each family member's phone
+// joins by scanning a QR code made for them on the Family tab.
 const VIEW_OK = new Set(['tab', 'close-sheet', 'toast-action', 'switch', 'be', 'lang', 'step', 'list-mode', 'item', 'task', 'meal',
   'check-week', 'recipe', 'bills', 'week-prev', 'week-next', 'feedback', 'fb-snooze', 'settings', 'backup', 'install']);
 const VIEW_FORMS = new Set(['feedback', 'settings']);
 const viewOnlyToast = () => toast('You can view this home but not change it. Ask the owner for edit access.');
 const ROLE = { owner: 'Owner', editor: 'Can edit', viewer: 'View only' };
-const INTENT = 'homzy:auth-intent';
 const cleanCode = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-let auth = { email: '', purpose: 'signin', invite: '', sentAt: 0 };
-let pendingHome = null;
+const joinLink = (code) => `${location.origin}/#join=${code}`;
 let share = { text: '', link: '' };
 let renderLater = false;
+let phones = { at: 0, list: [], loading: false }; // which members have a connected phone (owner only)
 
 /** View-only: hide buttons and forms that would change the home. */
 function hideEdits(root) {
@@ -1062,8 +1063,8 @@ function startSync() {
     },
     onRemoved: () => {
       s = M.wipe(); setupStep = 1; render();
-      openSheet(`<h2 class="sheet-title big">You’re no longer in this home</h2>
-        <p class="note">The owner removed your access or deleted the online copy, so it has been removed from this phone.</p>
+      openSheet(`<h2 class="sheet-title big">This phone was disconnected</h2>
+        <p class="note">The owner disconnected this phone or stopped sharing the home, so it has been removed from this phone. Ask them for a new QR code to connect again.</p>
         <button class="btn coral wide" data-action="close-sheet">OK</button>`);
     },
   });
@@ -1105,6 +1106,33 @@ function showSyncStatus() {
   if (el) el.innerHTML = syncLine();
 }
 
+// ----- Which members have their own phone connected (owner's Family tab) -----
+const canConnect = () => C.configured() && (!S.linked() || S.isOwner());
+const phoneOf = (memberId) => phones.list.find((p) => p.member_id === memberId && p.role !== 'owner');
+
+function refreshPhones(force) {
+  const L = S.linked();
+  if (!L || !S.isOwner() || phones.loading || (!force && Date.now() - phones.at < 10_000)) return;
+  phones.loading = true;
+  C.listMembers(L.hid)
+    .then((list) => { phones = { at: Date.now(), list, loading: false }; if (tab === 'family') softRender(); })
+    .catch(() => { phones.loading = false; phones.at = Date.now(); });
+}
+
+/** Buttons at the end of a member row on the Family tab. */
+function memberConnect(m) {
+  if (m.id === s.me || !canConnect()) return '';
+  const p = phoneOf(m.id);
+  return p
+    ? `<button class="pill ghost" data-action="sync-qr" data-id="${m.id}" aria-label="${esc(m.name)}’s phone: ${ROLE[p.role]}">${I.check} ${p.role === 'viewer' ? 'Viewing' : 'Connected'}</button>`
+    : `<button class="pill sage" data-action="sync-qr" data-id="${m.id}" aria-label="Show a QR code to connect ${esc(m.name)}’s phone">${I.qr} Connect</button>`;
+}
+const memberPhoneMeta = (m) => {
+  if (m.id === s.me && S.linked()) return 'This phone';
+  const p = S.isOwner() && phoneOf(m.id);
+  return p ? ROLE[p.role] : '';
+};
+
 function syncCard() {
   if (!C.configured()) {
     return `<div class="card info"><b>Use Homzy on every phone</b>
@@ -1113,133 +1141,149 @@ function syncCard() {
   const L = S.linked();
   if (!L) {
     return `<div class="card info">
-      <b>Use Homzy on every phone</b>
-      <p>Sign in with your email to put this home online. Then invite family to view or edit it from their own phones.</p>
-      <button class="btn coral wide" data-action="sync-start">${I.cloud} Turn on family sync</button>
+      <b>Use Homzy on everyone’s phone</b>
+      <p>${s.members.length > 1
+        ? 'Tap <b>Connect</b> next to a family member to show their QR code. They scan it with their phone camera and Homzy opens with your home. No email or password.'
+        : 'Add a family member above, then tap <b>Connect</b> next to their name to show a QR code for their phone.'}</p>
     </div>`;
   }
+  refreshPhones();
+  const lost = !C.signedIn();
   return `<div class="card sync-card">
     <p class="sync-status" id="sync-status" role="status">${syncLine()}</p>
-    <p class="meta">${esc(C.user()?.email || 'Signed in')} · ${ROLE[L.role] || ''}</p>
-    ${!C.signedIn() ? '<button class="btn coral wide" data-action="sync-signin">Sign in again to keep syncing</button>' : ''}
-    ${S.isOwner() ? `<button class="btn coral wide" data-action="sync-invite">${I.share} Invite family</button>` : ''}
+    <p class="meta">${lost ? 'This phone lost its connection. Ask the owner for a new QR code.' : `This phone · ${ROLE[L.role] || ''}`}</p>
     <div class="stack-sm">
-      <button class="menu-row" data-action="sync-access">Who can see this home ${I.chev}</button>
-      ${S.isOwner() ? '' : `<button class="menu-row" data-action="sync-leave">Leave this home ${I.chev}</button>`}
+      <button class="menu-row" data-action="sync-access">Connected phones ${I.chev}</button>
+      ${S.isOwner() ? '' : `<button class="menu-row" data-action="sync-leave">Disconnect this phone ${I.chev}</button>`}
     </div>
   </div>`;
-}
-
-function authError(msg) {
-  const el = $('#auth-err');
-  if (el) { el.textContent = msg; el.hidden = false; } else toast(msg);
-}
-
-/** Disable a button and change its label while `fn` runs. */
-async function busy(id, label, fn) {
-  const b = $('#' + id);
-  const old = b?.textContent;
-  if (b) { b.disabled = true; b.textContent = label; }
-  try { return await fn(); } finally { if (b?.isConnected) { b.disabled = false; b.textContent = old; } }
-}
-
-const saveIntent = () => { try { localStorage.setItem(INTENT, JSON.stringify({ purpose: auth.purpose, invite: auth.invite, email: auth.email, at: Date.now() })); } catch { /* blocked */ } };
-const clearIntent = () => { try { localStorage.removeItem(INTENT); } catch { /* blocked */ } };
-function restoreIntent() {
-  try {
-    const i = JSON.parse(localStorage.getItem(INTENT) || 'null');
-    if (i && Date.now() - i.at < 3600e3) auth = { ...auth, purpose: i.purpose, invite: i.invite, email: i.email };
-  } catch { /* ignore */ }
-}
-
-function authSheet(purpose = 'signin', invite = '') {
-  auth = { ...auth, purpose, invite: invite || (purpose === 'create' ? '' : auth.invite) };
-  const [title, sub] = {
-    create: ['Turn on family sync', 'We’ll email you a code to sign in. No password needed.'],
-    join: ['Join your family’s home', 'Sign in with your email to accept the invite. No password needed.'],
-    signin: ['Sign in', 'Use the email you signed in with before. Got an invite? Add its code too.'],
-  }[purpose];
-  const replaces = purpose !== 'create' && s.setup && !S.linked();
-  openSheet(`
-    <h2 class="sheet-title big">${title}</h2>
-    <p class="sub">${sub}</p>
-    <form data-form="sync-email" class="stack">
-      <label class="field">Email<input name="email" type="email" autocomplete="email" inputmode="email" value="${esc(auth.email)}" placeholder="you@example.com" maxlength="200" required autofocus></label>
-      ${purpose !== 'create' ? `<label class="field">Invite code${purpose === 'join' ? '' : ' <span class="opt">if you have one</span>'}
-        <input name="invite" value="${esc(auth.invite)}" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" placeholder="e.g. K7MP3QXA"></label>` : ''}
-      ${replaces ? `<p class="note">This phone already has its own Homzy home. Joining replaces it with your family’s home. <button type="button" class="link" data-action="backup">Download a backup first</button></p>` : ''}
-      <p class="note error" id="auth-err" role="alert" hidden></p>
-      <button class="btn coral wide" id="auth-btn">Send code</button>
-    </form>`);
-}
-
-function codeSheet() {
-  openSheet(`
-    <h2 class="sheet-title big">Check your email</h2>
-    <p class="sub">We sent a code to <b>${esc(auth.email)}</b>. It can take a minute, and it may be in spam.</p>
-    <form data-form="sync-code" class="stack">
-      <label class="field">Code<input name="code" class="code-input" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,12}" maxlength="12" required autofocus></label>
-      <p class="note error" id="auth-err" role="alert" hidden></p>
-      <button class="btn coral wide" id="auth-btn">Sign in</button>
-      <div class="btn-row">
-        <button type="button" class="btn ghost" data-action="sync-back">Change email</button>
-        <button type="button" class="btn ghost" data-action="sync-resend">Send again</button>
-      </div>
-      <p class="note plain">Got a link instead of a code? Tap it on this phone and you’ll be signed in.</p>
-    </form>`);
 }
 
 function errorSheet(msg) {
   openSheet(`<h2 class="sheet-title big">That didn’t work</h2><p class="note">${esc(msg)}</p>
     <button class="btn coral wide" data-action="close-sheet">OK</button>`);
 }
+const workingSheet = (title) => openSheet(`<h2 class="sheet-title big">${title}</h2><div class="progress"><i style="width:60%"></i></div>`);
 
-/** Signed in already: open a "working on it" sheet and carry on. */
-async function continueSignedIn() {
-  openSheet('<h2 class="sheet-title big">Opening your home…</h2><div class="progress"><i style="width:60%"></i></div>');
-  try { await afterSignIn(); } catch (e) { errorSheet(e.message); }
+/** Disable a button and change its label while `fn` runs. */
+async function busy(id, label, fn) {
+  const b = $('#' + id);
+  const old = b?.innerHTML;
+  if (b) { b.disabled = true; b.textContent = label; }
+  try { return await fn(); } finally { if (b?.isConnected) { b.disabled = false; b.innerHTML = old; } }
+}
+function formError(msg) {
+  const el = $('#form-err');
+  if (el) { el.textContent = msg; el.hidden = false; } else toast(msg);
 }
 
-/** After sign-in: join with the invite, open an existing home, or put this one online. Throws on failure. */
-async function afterSignIn() {
-  const { purpose, invite } = auth;
-  clearIntent();
-  let info = await C.rpc('my_household');
-  if (invite && !(info && S.linked()?.hid === info.household_id)) {
-    info = await C.rpc('join_household', { p_code: invite });
-    auth.invite = '';
+// ----- Owner: put the home online and make QR codes -----
+async function goOnline() {
+  await C.ensureAccount();
+  const info = await C.rpc('my_household');
+  if (info) { // this phone already shares a home (e.g. after a reinstall that kept storage)
+    const row = await C.getHousehold(info.household_id);
+    S.link({ hid: info.household_id, role: info.role, rev: row.rev, base: row.data, memberId: info.member_id });
+    S.run();
+    return;
   }
-  if (info) {
-    if (S.linked()?.hid === info.household_id) { closeSheet(); toast('Signed in. Syncing again.'); S.run(); render(); return; }
-    if (!invite && s.setup && !S.linked()) { pendingHome = info; return useOnlineSheet(info); }
-    return loadHome(info);
+  const doc = S.docOf(s);
+  const r = await C.rpc('create_household', { p_name: s.home.name, p_data: doc, p_member_id: s.me });
+  S.link({ hid: r.household_id, role: 'owner', rev: r.rev, base: doc, memberId: s.me });
+}
+
+/** Tap "Connect" next to a member. */
+function connectSheet(memberId) {
+  const m = M.member(s, memberId);
+  if (!m) return;
+  const p = phoneOf(memberId);
+  if (p) {
+    return openSheet(`
+      <h2 class="sheet-title big">${esc(m.name)}’s phone is connected</h2>
+      <p class="sub">${ROLE[p.role]} · since ${new Date(p.joined_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</p>
+      <button class="btn ghost wide" data-action="sync-role" data-user="${p.user_id}" data-role="${p.role === 'viewer' ? 'editor' : 'viewer'}">${p.role === 'viewer' ? 'Allow them to make changes' : 'Make it view only'}</button>
+      <button class="btn ghost wide" data-action="sync-qr-new" data-id="${m.id}">${I.qr} New QR code for another phone</button>
+      <button class="btn danger wide" data-action="sync-remove" data-user="${p.user_id}" data-name="${esc(m.name)}">Disconnect ${esc(m.name)}’s phone</button>`);
   }
-  if (purpose === 'create' && s.setup) return createHome();
-  return noHomeSheet();
+  roleSheet(memberId);
 }
 
-function useOnlineSheet(info) {
+function roleSheet(memberId) {
+  const m = M.member(s, memberId);
   openSheet(`
-    <h2 class="sheet-title big">You already have a home online</h2>
-    <p class="note">${esc(C.user()?.email || 'This email')} is part of “${esc(info.name)}”. Use it on this phone? This phone’s own data will be replaced.
-      <button type="button" class="link" data-action="backup">Download a backup first</button></p>
-    <div class="btn-row">
-      <button class="btn ghost" data-action="close-sheet">Not now</button>
-      <button class="btn coral" data-action="sync-use-online">Use it</button>
-    </div>`);
+    <h2 class="sheet-title big">Connect ${esc(m.name)}’s phone</h2>
+    <form data-form="sync-qr" data-id="${m.id}" class="stack">
+      <div class="field">What can ${esc(m.name)} do?
+        <div class="chips">
+          <label class="chip toggle"><input type="radio" name="role" value="editor" checked>Can edit</label>
+          <label class="chip toggle"><input type="radio" name="role" value="viewer">View only</label>
+        </div>
+        <span class="hint role-hint">Can edit: add to the list, plan meals, log bills and food from outside. View only: see everything, change nothing.</span>
+      </div>
+      ${S.linked() ? '' : '<p class="note">This puts your home online so family phones can sync with it. Only phones that scan your QR codes can see it.</p>'}
+      <p class="note error" id="form-err" role="alert" hidden></p>
+      <button class="btn coral wide" id="qr-btn">${I.qr} Show QR code</button>
+    </form>`);
 }
 
-function noHomeSheet() {
+async function qrSvg(text) {
+  const { default: qrcode } = await import('./vendor/qrcode.js');
+  const q = qrcode(0, 'M');
+  q.addData(text);
+  q.make();
+  return q.createSvgTag({ cellSize: 6, margin: 3, scalable: true });
+}
+
+async function showQr(code, name, role) {
+  const link = joinLink(code);
+  share = {
+    link,
+    text: `${me()?.name || 'Your family'} added you to “${s.home.name}” on Homzy (${role === 'viewer' ? 'view only' : 'can edit'}).\n`
+      + `Open this link on your phone:\n${link}\n\nCode: ${code}. It works once, for 7 days.`,
+  };
   openSheet(`
-    <h2 class="sheet-title big">No home found</h2>
-    <p class="sub">${esc(C.user()?.email || 'This email')} isn’t part of a Homzy home yet. Ask your family for an invite code.</p>
+    <h2 class="sheet-title big">Scan to connect ${esc(name)}</h2>
+    <p class="sub">${ROLE[role]} · works once, for 7 days</p>
+    <div class="qr-box" role="img" aria-label="QR code for ${esc(name)}">${await qrSvg(link)}</div>
+    <p class="code-box small" aria-label="Code ${code.split('').join(' ')}">${code.slice(0, 4)} ${code.slice(4)}</p>
+    <p class="note plain">On ${esc(name)}’s phone, open the camera and point it at this code, then tap the link. Or open Homzy there and type the code.</p>
+    <button class="btn ghost wide" data-action="sync-share">${I.share} Send as a link instead</button>`,
+  { tall: true, onClose: () => setTimeout(() => refreshPhones(true), 300) });
+}
+
+// ----- Family member: join by QR link or typed code -----
+function joinSheet() {
+  openSheet(`
+    <h2 class="sheet-title big">Join your family’s home</h2>
+    <p class="sub">Ask whoever set up Homzy to open Family → Connect next to your name.</p>
+    ${'BarcodeDetector' in window ? `<button class="btn coral wide" data-action="sync-scan">${I.camera} Scan the QR code</button>` : ''}
     <form data-form="sync-join" class="stack">
-      <label class="field">Invite code<input name="invite" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" placeholder="e.g. K7MP3QXA" required autofocus></label>
-      <p class="note error" id="auth-err" role="alert" hidden></p>
-      <button class="btn coral wide" id="auth-btn">Join</button>
-    </form>
-    ${s.setup ? '' : '<button class="btn ghost wide" data-action="close-sheet">Set up a new home instead</button>'}
-    <button class="link" data-action="sync-switch-email">Use a different email</button>`);
+      <label class="field">Or type the code<input name="code" class="code-input" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" placeholder="K7MP 3QXA" required></label>
+      <p class="note error" id="form-err" role="alert" hidden></p>
+      <button class="btn ${'BarcodeDetector' in window ? 'ghost' : 'coral'} wide" id="join-btn">Join</button>
+    </form>`);
+}
+
+/** Join with a code from a QR link or typed in. Asks first if this phone has its own home. */
+function joinHome(code) {
+  if (S.linked()) return errorSheet('This phone is already connected to a home. Disconnect it in the Family tab first.');
+  if (s.setup) {
+    return confirmSheet('Join your family’s home?',
+      `This phone already has its own Homzy home. Joining replaces it with your family’s home. <button type="button" class="link" data-action="backup">Download a backup first</button>`,
+      'Join', 'sync-join-yes', false, code);
+  }
+  doJoin(code);
+}
+
+async function doJoin(code) {
+  workingSheet('Joining your family’s home…');
+  try {
+    await C.ensureAccount();
+    const info = await C.rpc('join_household', { p_code: code });
+    await loadHome(info);
+  } catch (e) {
+    errorSheet(e.message);
+  }
 }
 
 async function loadHome(info) {
@@ -1256,27 +1300,11 @@ async function loadHome(info) {
   else toast(`Welcome to ${s.home.name}, ${me().name}`);
 }
 
-async function createHome() {
-  const doc = S.docOf(s);
-  const r = await C.rpc('create_household', { p_name: s.home.name, p_data: doc, p_member_id: s.me });
-  S.link({ hid: r.household_id, role: 'owner', rev: r.rev, base: doc, memberId: s.me });
-  render();
-  openSheet(`
-    <h2 class="sheet-title big">Your home is online</h2>
-    <p class="sub">Changes now sync to everyone you invite. Homzy still works without internet and catches up later.</p>
-    <button class="btn coral wide" data-action="sync-invite">${I.share} Invite family</button>
-    <button class="btn ghost wide" data-action="close-sheet">Later</button>`);
-}
-
 function whoAmISheet() {
   openSheet(`
     <h2 class="sheet-title big">Which one are you?</h2>
     <p class="sub">So your family can see who bought what and who’s doing which task.</p>
-    <div class="who-grid">${s.members.map((m) => `<button class="who" data-action="sync-iam" data-id="${m.id}">${avatar(m, 'lg')}<span>${esc(m.name)}</span></button>`).join('')}</div>
-    ${viewOnly() ? '' : `<form data-form="sync-iam-new" class="inline-add">
-      <input name="name" placeholder="Not listed? Add your name" maxlength="24" autocomplete="off" aria-label="Your name">
-      <button class="add-btn" aria-label="Add">${I.plus}</button>
-    </form>`}`);
+    <div class="who-grid">${s.members.map((m) => `<button class="who" data-action="sync-iam" data-id="${m.id}">${avatar(m, 'lg')}<span>${esc(m.name)}</span></button>`).join('')}</div>`);
 }
 
 function iAm(id) {
@@ -1288,94 +1316,72 @@ function iAm(id) {
   toast(`Welcome, ${me().name}`);
 }
 
-function inviteSheet() {
-  const others = s.members.filter((m) => m.id !== s.me);
-  openSheet(`
-    <h2 class="sheet-title big">Invite family</h2>
-    <p class="sub">They get a private link that works once, for 7 days.</p>
-    <form data-form="sync-invite" class="stack">
-      <div class="field">Who is it for?
-        <div class="chips">
-          ${others.map((m, i) => `<label class="chip toggle"><input type="radio" name="who" value="${m.id}" ${i === 0 ? 'checked' : ''}>${esc(m.name)}</label>`).join('')}
-          <label class="chip toggle"><input type="radio" name="who" value="new" ${others.length ? '' : 'checked'}>${I.plus} Someone new</label>
-        </div>
-      </div>
-      <label class="field new-name">Their name<input name="name" maxlength="24" placeholder="e.g. Arun" autocomplete="off"></label>
-      <div class="field">What can they do?
-        <div class="chips">
-          <label class="chip toggle"><input type="radio" name="role" value="editor" checked>Can edit</label>
-          <label class="chip toggle"><input type="radio" name="role" value="viewer">View only</label>
-        </div>
-        <span class="hint role-hint">Can edit: add to the list, plan meals, log bills and food from outside. View only: see everything, change nothing.</span>
-      </div>
-      <p class="note error" id="auth-err" role="alert" hidden></p>
-      <button class="btn coral wide" id="auth-btn">Create invite</button>
-    </form>`, { tall: true });
+/** Read a QR code from a photo (Chrome on Android has a built-in reader). */
+async function scanQrPhoto(file) {
+  try {
+    const img = await createImageBitmap(file);
+    const found = await new window.BarcodeDetector({ formats: ['qr_code'] }).detect(img);
+    const text = found[0]?.rawValue || '';
+    const code = cleanCode(text.match(/join=([A-Za-z0-9]+)/)?.[1] || text);
+    if (code.length !== 8) return formError('Couldn’t find a Homzy QR code in that photo. Try again, closer and in good light.');
+    joinHome(code);
+  } catch {
+    formError('Couldn’t read that photo. Type the code instead.');
+  }
 }
 
-function inviteReadySheet(code, name, role) {
-  const link = `${location.origin}/#join=${code}`;
-  share = {
-    link,
-    text: `${me()?.name || 'Your family'} invited you to “${s.home.name}” on Homzy (${role === 'viewer' ? 'view only' : 'can edit'}).\n`
-      + `Open this link and sign in with your email:\n${link}\n\nInvite code: ${code}. It works once, for 7 days.`,
-  };
-  openSheet(`
-    <h2 class="sheet-title big">Invite for ${esc(name)}</h2>
-    <p class="sub">${ROLE[role]} · works once, for 7 days</p>
-    <p class="code-box" aria-label="Invite code ${code.split('').join(' ')}">${code.slice(0, 4)} ${code.slice(4)}</p>
-    <button class="btn coral wide" data-action="sync-share">${I.share} Send on WhatsApp</button>
-    <button class="btn ghost wide" data-action="sync-copy">${I.copy} Copy link</button>
-    <p class="note plain">Send it only to ${esc(name)}. Anyone with the link can join until it’s used.</p>`);
-}
-
+// ----- Everyone: who is connected -----
 let accessSeq = 0;
 async function accessSheet() {
   const L = S.linked();
   if (!L) return;
   const seq = ++accessSeq;
   const owner = S.isOwner();
-  openSheet('<h2 class="sheet-title big">Who can see this home</h2><p class="note plain center">Loading…</p>', { tall: true });
+  openSheet('<h2 class="sheet-title big">Connected phones</h2><p class="note plain center">Loading…</p>', { tall: true });
   try {
     const [people, invites] = await Promise.all([C.listMembers(L.hid), owner ? C.listInvites(L.hid) : []]);
     if ($('#sheet-root').hidden || seq !== accessSeq) return; // closed, or a newer refresh is on its way
+    phones = { at: Date.now(), list: people, loading: false };
     const short = (iso) => new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
     openSheet(`
-      <h2 class="sheet-title big">Who can see this home</h2>
+      <h2 class="sheet-title big">Connected phones</h2>
       <ul class="rows">${people.map((p) => {
         const m = M.member(s, p.member_id);
-        const label = m?.name || p.email || 'Someone';
-        return `<li class="row">${avatar(m || { name: label, hue: 200 })}
-          <span class="row-main static"><b>${esc(label)}${p.user_id === C.user()?.id ? ' <span class="tag">You</span>' : ''}</b>
-            <span class="meta">${esc([p.email, ROLE[p.role]].filter(Boolean).join(' · '))}</span></span>
+        const label = m?.name || 'A family phone';
+        return `<li class="row">${avatar(m || { name: '?', hue: 200 })}
+          <span class="row-main static"><b>${esc(label)}${p.user_id === C.user()?.id ? ' <span class="tag">This phone</span>' : ''}</b>
+            <span class="meta">${ROLE[p.role]} · since ${short(p.joined_at)}</span></span>
           ${owner && p.role !== 'owner' ? `
             <button class="pill ghost" data-action="sync-role" data-user="${p.user_id}" data-role="${p.role === 'viewer' ? 'editor' : 'viewer'}">${p.role === 'viewer' ? 'Allow edits' : 'Make view only'}</button>
-            <button class="icon-btn quiet" data-action="sync-remove" data-user="${p.user_id}" data-name="${esc(label)}" aria-label="Remove ${esc(label)}">${I.x}</button>` : ''}
+            <button class="icon-btn quiet" data-action="sync-remove" data-user="${p.user_id}" data-name="${esc(label)}" aria-label="Disconnect ${esc(label)}’s phone">${I.x}</button>` : ''}
         </li>`;
       }).join('')}</ul>
-      ${invites.length ? `<h3 class="sec">Invites not used yet</h3>
+      ${invites.length ? `<h3 class="sec">QR codes not scanned yet</h3>
       <ul class="rows">${invites.map((i) => {
-        const name = M.firstName(s, i.member_id);
-        return `<li class="row"><span class="row-main static"><b class="mono">${esc(i.code)}</b>
-          <span class="meta">For ${esc(i.member_id ? name : 'someone new')} · ${ROLE[i.role]} · until ${short(i.expires_at)}</span></span>
-          <button class="pill ghost" data-action="sync-reshare" data-code="${esc(i.code)}" data-name="${esc(i.member_id ? name : 'someone new')}" data-role="${i.role}">Send</button>
-          <button class="icon-btn quiet" data-action="sync-revoke" data-code="${esc(i.code)}" aria-label="Cancel invite ${esc(i.code)}">${I.x}</button></li>`;
+        const name = i.member_id ? M.firstName(s, i.member_id) : 'someone';
+        return `<li class="row"><span class="row-main static"><b class="mono">${esc(i.code.slice(0, 4))} ${esc(i.code.slice(4))}</b>
+          <span class="meta">For ${esc(name)} · ${ROLE[i.role]} · until ${short(i.expires_at)}</span></span>
+          <button class="pill ghost" data-action="sync-reshow" data-code="${esc(i.code)}" data-name="${esc(name)}" data-role="${i.role}">${I.qr} Show</button>
+          <button class="icon-btn quiet" data-action="sync-revoke" data-code="${esc(i.code)}" aria-label="Cancel this QR code">${I.x}</button></li>`;
       }).join('')}</ul>` : ''}
-      ${owner ? `<button class="btn coral wide" data-action="sync-invite">${I.share} Invite someone</button>
+      ${owner ? `<p class="note plain">To connect someone, tap <b>Connect</b> next to their name in the Members list.</p>
         <button class="menu-row danger" data-action="sync-delete">Stop sharing and delete the online copy ${I.chev}</button>`
-      : '<p class="note plain">Only the person who set up this home can invite people or change access.</p>'}`, { tall: true });
+      : '<p class="note plain">Only the person who set up this home can connect or disconnect phones.</p>'}`, { tall: true });
   } catch (e) {
     if (seq === accessSeq) errorSheet(e.message);
   }
 }
 
-function confirmSheet(title, body, yesLabel, yesAction, danger = true) {
+let confirmArg = null;
+function confirmSheet(title, body, yesLabel, yesAction, danger = true, arg = null) {
+  confirmArg = arg;
   openSheet(`<h2 class="sheet-title big">${title}</h2><p class="note">${body}</p>
     <div class="btn-row"><button class="btn ghost" data-action="close-sheet">Cancel</button>
     <button class="btn ${danger ? 'danger-fill' : 'coral'}" data-action="${yesAction}">${yesLabel}</button></div>`);
 }
 
-async function signOutHere(message) {
+/** Forget the home and this phone's account (after leaving or disconnecting). */
+async function forgetHere(message) {
   await C.signOut();
   S.unlink();
   s = M.wipe();
@@ -1385,155 +1391,108 @@ async function signOutHere(message) {
   toast(message);
 }
 
-async function handleLinks() {
+function handleLinks() {
   const h = location.hash;
   if (!h || h.length < 2) return;
-  const p = new URLSearchParams(h.slice(1));
-  const join = cleanCode(p.get('join'));
-  const fromEmail = p.get('access_token');
-  const problem = p.get('error_description');
-  if (!join && !fromEmail && !problem) return;
+  const code = cleanCode(new URLSearchParams(h.slice(1)).get('join'));
+  if (!code) return;
   history.replaceState(null, '', location.pathname + location.search);
-  if (problem) return errorSheet(problem.replace(/\+/g, ' '));
   if (!C.configured()) return toast('Family sync isn’t switched on for this site yet.');
-  if (fromEmail) {
-    restoreIntent();
-    openSheet('<h2 class="sheet-title big">Signing you in…</h2><div class="progress"><i style="width:60%"></i></div>');
-    try { await C.fromLink(h); await afterSignIn(); } catch (e) { errorSheet(e.message); }
-    return;
-  }
-  auth.invite = join;
-  if (C.signedIn()) { auth.purpose = 'join'; return continueSignedIn(); }
-  authSheet('join', join);
+  joinHome(code);
 }
 
 const SYNC_ACTIONS = {
-  'sync-start': () => { if (C.signedIn()) { auth.purpose = 'create'; auth.invite = ''; continueSignedIn(); } else authSheet('create'); },
-  'sync-signin': () => { if (C.signedIn()) { auth.purpose = 'signin'; continueSignedIn(); } else authSheet('signin'); },
-  'sync-back': () => authSheet(auth.purpose, auth.invite),
-  'sync-switch-email': async () => { await C.signOut(); authSheet(auth.purpose === 'create' ? 'create' : 'signin'); },
-  'sync-resend': async () => {
-    const wait = 60 - Math.round((Date.now() - auth.sentAt) / 1000);
-    if (wait > 0) return authError(`You can ask for a new code in ${wait} seconds.`);
-    try { await C.sendCode(auth.email); auth.sentAt = Date.now(); toast('New code sent'); } catch (e) { authError(e.message); }
-  },
-  'sync-use-online': async () => { try { await loadHome(pendingHome); } catch (e) { errorSheet(e.message); } },
-  'sync-iam': (el) => iAm(el.dataset.id),
-  'sync-invite': () => inviteSheet(),
+  'sync-qr': (el) => connectSheet(el.dataset.id),
+  'sync-qr-new': (el) => roleSheet(el.dataset.id),
+  'sync-reshow': (el) => showQr(el.dataset.code, el.dataset.name, el.dataset.role),
   'sync-share': () => {
     if (navigator.share) navigator.share({ text: share.text }).catch(() => {});
     else window.open('https://wa.me/?text=' + encodeURIComponent(share.text), '_blank', 'noopener');
   },
-  'sync-copy': async () => {
-    try { await navigator.clipboard.writeText(share.text); toast('Invite copied. Paste it in a message.'); }
-    catch { toast(share.link); }
-  },
-  'sync-reshare': (el) => inviteReadySheet(el.dataset.code, el.dataset.name, el.dataset.role),
+  'sync-join-start': () => joinSheet(),
+  'sync-join-yes': () => doJoin(confirmArg),
+  'sync-scan': () => $('#qr-photo').click(),
+  'sync-iam': (el) => iAm(el.dataset.id),
   'sync-access': () => accessSheet(),
   'sync-role': async (el) => {
     try {
       await C.rpc('set_member_role', { p_user: el.dataset.user, p_role: el.dataset.role });
-      toast(el.dataset.role === 'viewer' ? 'Changed to view only' : 'They can edit now');
-      accessSheet();
+      toast(el.dataset.role === 'viewer' ? 'Changed to view only' : 'They can make changes now');
+      refreshPhones(true);
+      if (el.closest('.sheet')?.querySelector('[data-action="sync-qr-new"]')) closeSheet(); else accessSheet();
     } catch (e) { toast(e.message); }
   },
   'sync-remove': async (el) => {
     try {
       await C.rpc('remove_member', { p_user: el.dataset.user });
-      toast(`${el.dataset.name} can no longer open this home`);
-      accessSheet();
+      toast(`${el.dataset.name}’s phone is disconnected`);
+      refreshPhones(true);
+      if (el.closest('.sheet')?.querySelector('[data-action="sync-qr-new"]')) closeSheet(); else accessSheet();
     } catch (e) { toast(e.message); }
   },
   'sync-revoke': async (el) => {
-    try { await C.rpc('revoke_invite', { p_code: el.dataset.code }); toast('Invite cancelled'); accessSheet(); } catch (e) { toast(e.message); }
+    try { await C.rpc('revoke_invite', { p_code: el.dataset.code }); toast('QR code cancelled'); accessSheet(); } catch (e) { toast(e.message); }
   },
-  'sync-delete': () => confirmSheet('Delete the online copy?',
-    'Everyone you invited loses access, and their phones remove this home. This phone keeps its own copy, so nothing is lost here.',
-    'Delete online copy', 'sync-delete-yes'),
+  'sync-delete': () => confirmSheet('Stop sharing this home?',
+    'Every connected phone is disconnected and the online copy is deleted. This phone keeps its own copy, so nothing is lost here.',
+    'Stop sharing', 'sync-delete-yes'),
   'sync-delete-yes': async () => {
     try {
       await C.rpc('delete_household');
       S.unlink();
+      phones = { at: 0, list: [], loading: false };
       closeSheet(); render();
-      toast('Online copy deleted. This phone still has everything.');
+      toast('Stopped sharing. This phone still has everything.');
     } catch (e) { errorSheet(e.message); }
   },
-  'sync-signout': async () => {
+  'sync-leave': async () => {
     await S.run().catch(() => {});
     const unsent = S.pending();
-    confirmSheet('Sign out of this phone?',
+    confirmSheet('Disconnect this phone?',
       `${unsent ? '<b>Some changes haven’t uploaded yet and will be lost.</b> Connect to the internet first if you can. ' : ''}`
-      + `“${esc(s.home.name)}” stays online for your family. This phone’s copy is removed until you sign in again.`,
-      'Sign out', 'sync-signout-yes');
+      + `“${esc(s.home.name)}” is removed from this phone. It stays on everyone else’s. To connect again you’ll need a new QR code.`,
+      'Disconnect', 'sync-leave-yes');
   },
-  'sync-signout-yes': () => signOutHere('Signed out. Your home is still online for your family.'),
-  'sync-leave': () => confirmSheet('Leave this home?',
-    `You’ll stop seeing “${esc(s.home.name)}”, and it’s removed from this phone. The owner can invite you again.`,
-    'Leave', 'sync-leave-yes'),
   'sync-leave-yes': async () => {
-    try { await C.rpc('leave_household'); await signOutHere('You left the home.'); } catch (e) { errorSheet(e.message); }
+    try { await C.rpc('leave_household'); } catch (e) { if (e.code !== 'signed_out') return errorSheet(e.message); }
+    await forgetHere('This phone is disconnected.');
   },
 };
 
 const SYNC_FORMS = {
-  'sync-email': async (f, d) => {
-    const email = d.email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return authError('Please enter a valid email address.');
-    const invite = cleanCode(d.invite);
-    if (invite && invite.length !== 8) return authError('Invite codes have 8 letters and numbers.');
-    auth.email = email; auth.invite = invite;
-    saveIntent();
-    try {
-      await busy('auth-btn', 'Sending…', () => C.sendCode(email));
-      auth.sentAt = Date.now();
-      codeSheet();
-    } catch (e) { authError(e.message); }
-  },
-  'sync-code': async (f, d) => {
-    const code = d.code.replace(/\D/g, '');
-    if (code.length < 6) return authError('Enter the code from the email.');
-    try {
-      await busy('auth-btn', 'Checking…', async () => { await C.verifyCode(auth.email, code); await afterSignIn(); });
-    } catch (e) { authError(e.message); }
-  },
-  'sync-join': async (f, d) => {
-    const invite = cleanCode(d.invite);
-    if (invite.length !== 8) return authError('Invite codes have 8 letters and numbers.');
-    auth.invite = invite;
-    try { await busy('auth-btn', 'Joining…', afterSignIn); } catch (e) { authError(e.message); }
-  },
-  'sync-iam-new': (f, d) => {
-    const n = d.name.trim();
-    if (!n) return;
-    const m = commit(null, () => M.addMember(s, n));
-    if (m) iAm(m.id);
-  },
-  'sync-invite': async (f, d) => {
+  'sync-qr': async (f, d) => {
+    const m = M.member(s, f.dataset.id);
     const role = d.role === 'viewer' ? 'viewer' : 'editor';
-    let memberId = d.who && d.who !== 'new' ? d.who : null;
-    let name = memberId ? M.firstName(s, memberId) : d.name.trim();
-    if (!memberId) {
-      if (!name) { f.name.focus(); return authError('Type their name, so the family knows who joined.'); }
-      const m = commit(null, () => M.addMember(s, name));
-      memberId = m?.id || null;
-      name = m?.name || name;
-    }
+    if (!m) return closeSheet();
     try {
-      const code = await busy('auth-btn', 'Creating…', async () => {
-        await S.run(); // make sure their name is online before they join
-        return C.rpc('create_invite', { p_role: role, p_member_id: memberId });
+      const code = await busy('qr-btn', 'Making the code…', async () => {
+        if (!S.linked()) await goOnline();
+        await S.run(); // make sure their name is online before they scan
+        return C.rpc('create_invite', { p_role: role, p_member_id: m.id });
       });
-      inviteReadySheet(code, name, role);
-    } catch (e) { authError(e.message); }
+      render();
+      await showQr(code, m.name, role);
+    } catch (e) { formError(e.message); }
+  },
+  'sync-join': (f, d) => {
+    const code = cleanCode(d.code);
+    if (code.length !== 8) return formError('The code has 8 letters and numbers.');
+    joinHome(code);
   },
 };
+
+$('#qr-photo').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (file) scanQrPhoto(file);
+});
 
 // ---------- Actions ----------
 const byId = (arr, id) => arr.find((x) => x.id === id);
 const after = (el, fn) => { if (el.dataset.keep) fn?.(); else if (el.dataset.close) closeSheet(); };
 
 const ACTIONS = {
-  tab: (el) => { tab = el.dataset.tab; setPref('tab', tab); closeSheet(); render(); scrollTo(0, 0); },
+  tab: (el) => { tab = el.dataset.tab; setPref('tab', tab); closeSheet(); render(); scrollTo(0, 0); if (tab === 'family') refreshPhones(true); },
   'close-sheet': () => closeSheet(),
   'toast-action': () => runToastAction(),
   scan: () => { closeSheet(); photo.click(); },
@@ -1648,7 +1607,12 @@ const ACTIONS = {
   'task-remove': (el) => { const t = byId(s.tasks, el.dataset.id); closeSheet(); commit('Task deleted', () => M.removeTask(s, t.id)); },
 
   // family & recipes
-  'member-remove': (el) => { const m = M.member(s, el.dataset.id); commit(`Removed ${m.name}. Their claims are open again.`, () => M.removeMember(s, m.id)); },
+  'member-remove': (el) => {
+    const m = M.member(s, el.dataset.id);
+    const p = S.isOwner() && phoneOf(m.id);
+    if (p) C.rpc('remove_member', { p_user: p.user_id }).then(() => refreshPhones(true)).catch(() => {}); // their phone goes too
+    commit(`Removed ${m.name}. Their claims are open again.`, () => M.removeMember(s, m.id));
+  },
   recipe: (el) => recipeSheet(el.dataset.id),
   'recipe-new': () => recipeSheet(null),
   fav: (el) => { const r = M.recipe(s, el.dataset.id); commit(s.favs.includes(r.id) ? `Removed ${r.name} from favourites` : `Saved ${r.name}`, () => M.toggleFav(s, r.id)); after(el); },

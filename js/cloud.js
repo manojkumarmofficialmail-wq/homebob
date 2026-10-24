@@ -1,4 +1,6 @@
-// Talks to Supabase: email-code sign-in and the household database.
+// Talks to Supabase: a private account for this phone, and the household database.
+// No email or password: each phone gets its own anonymous Supabase account the first
+// time it joins or shares a home, and keeps it on the phone.
 // Uses plain fetch against Supabase's REST endpoints, so the app needs no extra library.
 // The project URL and public (publishable) key come from /api/config.
 
@@ -89,27 +91,27 @@ async function call(path, { method = 'GET', body, token, headers = {} } = {}) {
 }
 
 const MESSAGES = {
-  already_in_household: 'This email is already part of a Homzy home. Sign out there first, or use another email.',
-  invite_not_found: 'That invite code isn’t right, or it was cancelled. Ask for a new one.',
-  invite_used: 'That invite was already used. Ask for a new one.',
-  invite_expired: 'That invite has expired. Ask for a new one.',
+  already_in_household: 'This phone is already connected to another Homzy home. Disconnect it there first.',
+  invite_not_found: 'That QR code isn’t right, or it was cancelled. Ask for a new one.',
+  invite_used: 'That QR code was already used. Ask for a new one.',
+  invite_expired: 'That QR code has expired. Ask for a new one.',
+  anonymous_provider_disabled: 'Family sync needs “Anonymous sign-ins” turned on in Supabase (Authentication → Sign In / Providers).',
   not_owner: 'Only the person who set up the home can do that.',
   owner_cannot_leave: 'You set up this home, so you can’t leave it. You can delete the online copy instead.',
   not_found: 'That person was already removed. Close this and open it again.',
   too_many_invites: 'You have 20 unused invites. Cancel some first.',
-  otp_expired: 'That code has expired or is wrong. Send a new one.',
-  over_email_send_rate_limit: 'Too many codes sent. Wait a few minutes and try again.',
+  over_request_rate_limit: 'Too many tries from this network. Please wait a few minutes.',
 };
 function friendly(code, fallback) {
   if (MESSAGES[code]) return MESSAGES[code];
-  if (/rate limit|for security purposes/i.test(fallback || '')) return 'Please wait a minute before asking for another code.';
-  if (/expired|invalid/i.test(fallback || '') && /otp|token/i.test(code + fallback)) return MESSAGES.otp_expired;
+  if (/anonymous sign-ins are disabled/i.test(fallback || '')) return MESSAGES.anonymous_provider_disabled;
+  if (/rate limit/i.test(fallback || '')) return MESSAGES.over_request_rate_limit;
   return fallback || 'Something went wrong. Please try again.';
 }
 
 let refreshing = null;
 async function refresh() {
-  if (!session?.refresh_token) throw new CloudError('Please sign in again.', { status: 401, code: 'signed_out' });
+  if (!session?.refresh_token) throw new CloudError('This phone isn’t connected any more.', { status: 401, code: 'signed_out' });
   refreshing ||= call('/auth/v1/token?grant_type=refresh_token', { method: 'POST', body: { refresh_token: session.refresh_token } })
     .then(keep)
     .catch((e) => {
@@ -121,7 +123,7 @@ async function refresh() {
 }
 
 async function token() {
-  if (!session) throw new CloudError('Please sign in again.', { status: 401, code: 'signed_out' });
+  if (!session) throw new CloudError('This phone isn’t connected any more.', { status: 401, code: 'signed_out' });
   if (session.expires_at - 60 < Date.now() / 1000) await refresh();
   return session.access_token;
 }
@@ -137,27 +139,15 @@ async function authed(path, opts = {}) {
   }
 }
 
-// ---------- Sign in with an email code ----------
-export async function sendCode(email) {
-  const redirect = encodeURIComponent(location.origin + '/');
-  await call(`/auth/v1/otp?redirect_to=${redirect}`, { method: 'POST', body: { email, create_user: true } });
-}
-
-export async function verifyCode(email, code) {
-  keep(await call('/auth/v1/verify', { method: 'POST', body: { type: 'email', email, token: code } }));
+// ---------- This phone's account ----------
+/** Make sure this phone has its own (anonymous) account. Safe to call again. */
+export async function ensureAccount() {
+  if (signedIn()) return user();
+  keep(await call('/auth/v1/signup', { method: 'POST', body: { data: {} } }));
   return user();
 }
 
-/** Sign-in links in the email land on /#access_token=… — keep that session. */
-export async function fromLink(hash) {
-  const p = new URLSearchParams(hash.replace(/^#/, ''));
-  const access = p.get('access_token'), refreshToken = p.get('refresh_token');
-  if (!access || !refreshToken) return null;
-  const u = await call('/auth/v1/user', { token: access });
-  keep({ access_token: access, refresh_token: refreshToken, expires_in: +p.get('expires_in') || 3600, user: u });
-  return user();
-}
-
+/** Forget this phone's account. Only used after leaving a home, so nothing is lost. */
 export async function signOut() {
   try { if (session) await call('/auth/v1/logout', { method: 'POST', token: session.access_token }); } catch { /* still forget locally */ }
   forget();

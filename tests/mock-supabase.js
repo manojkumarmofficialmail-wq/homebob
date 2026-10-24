@@ -1,9 +1,9 @@
 // A tiny in-memory stand-in for the parts of Supabase that Homzy uses, for local
-// testing only (npm start with MOCK_SUPABASE=1). The sign-in code is always 123456.
+// testing only (npm start with MOCK_SUPABASE=1). Each phone gets an anonymous account.
 // It mirrors the rules in supabase/schema.sql; the real rules are what protect data.
 import crypto from 'node:crypto';
 
-const users = new Map();     // email → { id, email }
+const users = new Map();     // email or id → { id, email }
 const households = new Map(); // id → { id, name, data, rev }
 const members = [];          // { household_id, user_id, role, member_id, email, joined_at }
 const invites = new Map();   // code → { code, household_id, role, member_id, expires_at, used_at, created_at }
@@ -101,6 +101,12 @@ export function mockSupabase(req, res, url, raw) {
   const q = (k) => url.searchParams.get(k)?.replace(/^(eq|gt)\./, '');
 
   try {
+    if (path === '/auth/v1/signup' && !body.email) { // anonymous sign-in
+      const u = { id: crypto.randomUUID(), email: null, is_anonymous: true };
+      users.set(u.id, u);
+      console.log(`[mock supabase] new phone account ${u.id.slice(0, 8)}`);
+      return send(200, session(u));
+    }
     if (path === '/auth/v1/otp') { console.log(`[mock supabase] sign-in code for ${body.email}: ${CODE}`); return send(200, {}); }
     if (path === '/auth/v1/verify') {
       if (body.token !== CODE) return send(403, { error_code: 'otp_expired', msg: 'Token has expired or is invalid' });
@@ -131,7 +137,7 @@ export function mockSupabase(req, res, url, raw) {
         h.data = body.data ?? h.data;
         if (body.name) h.name = body.name;
         h.rev += 1;
-        console.log(`[mock supabase] ${me.email} saved rev ${h.rev}`);
+        console.log(`[mock supabase] ${me.email || 'phone ' + me.id.slice(0, 8)} saved rev ${h.rev}`);
         return send(200, [pick(h, q('select'))]);
       }
     }

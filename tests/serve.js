@@ -1,7 +1,7 @@
 // Local server that behaves like Vercel: static files with vercel.json headers,
 // plus /api/feedback and /api/config. Run: npm start
 // MOCK_SUPABASE=1 npm start fakes Supabase in memory, so feedback and family sync
-// work without a real project. Sign-in codes print here (always 123456).
+// work without a real project.
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';

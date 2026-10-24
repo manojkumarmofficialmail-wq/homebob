@@ -461,3 +461,7 @@ body.locked #toast, body.setup-mode #toast { bottom: calc(24px + var(--safe-b));
 form:not(:has(input[name="who"][value="new"]:checked)) .new-name { display: none; }
 .role-hint { font-weight: 500; }
 body.readonly .actions, body.readonly #view .inline-add { display: none; }
+.qr-box { background: #fff; border-radius: 20px; padding: 14px; width: min(280px, 100%); margin: 0 auto; }
+.qr-box svg { display: block; width: 100%; height: auto; }
+.qr-box svg rect[fill="white"], .qr-box svg path[fill="white"] { fill: #fff; }
+.code-box.small { font-size: 24px; padding: 10px; }
