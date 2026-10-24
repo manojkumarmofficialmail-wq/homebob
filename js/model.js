@@ -1,5 +1,5 @@
-// Homzy data and every change to it. No DOM code here, so a cloud sync layer
-// can later replace load()/save() without touching the screens.
+// Homzy data and every change to it. No DOM code here. Family sync (sync.js)
+// listens to save() and merges in changes from other phones.
 import { RECIPES, CATALOG } from './data.js';
 import { matchCatalog } from './parse.js';
 
@@ -68,8 +68,30 @@ export function load() {
   }
 }
 
-export function save(s) {
-  try { localStorage.setItem(KEY, JSON.stringify(s)); return true; } catch { return false; }
+let afterSave = null;
+/** Run fn after every save (family sync uses this to upload changes). */
+export const onSave = (fn) => { afterSave = fn; };
+
+export function save(s, { quiet = false } = {}) {
+  let ok = true;
+  try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { ok = false; }
+  if (!quiet) afterSave?.(s);
+  return ok;
+}
+
+/** A home from the online copy, keeping this phone's own settings (who's using it, voice language). */
+export function adopt(doc, device = {}) {
+  // A deep copy, so later edits never change the synced copy held by sync.js.
+  const s = migrate({ ...JSON.parse(JSON.stringify(doc || {})), v: doc?.v || VERSION });
+  if (device.lang) s.lang = device.lang;
+  s.me = device.me && s.members.some((m) => m.id === device.me) ? device.me : null;
+  return s;
+}
+
+/** Forget everything on this phone (used when signing out of a synced home). */
+export function wipe() {
+  try { localStorage.removeItem(KEY); } catch { /* blocked */ }
+  return fresh();
 }
 
 export function fromBackup(text) {

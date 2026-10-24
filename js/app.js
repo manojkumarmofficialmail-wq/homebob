@@ -4,6 +4,8 @@ import { parseSpeech } from './parse.js';
 import { canListen, listen, speechError } from './speech.js';
 import * as N from './nutrition.js';
 import { sendFeedback, flushOutbox } from './feedback.js';
+import * as C from './cloud.js';
+import * as S from './sync.js';
 import {
   $, $$, esc, rupees, plural, I, avatar, dayName, weekday, dayNum, longDate, timeAgo, fmtTime, isoOf,
   openSheet, closeSheet, toast, runToastAction,
@@ -34,6 +36,7 @@ let setupDraft = { home: 'Our home', name: '', people: 4, dinners: SETUP_DINNERS
 const me = () => M.member(s, s.me);
 const who = (id) => (id === s.me ? 'you' : M.firstName(s, id));
 const Who = (id) => (id === s.me ? 'You' : M.firstName(s, id));
+const viewOnly = () => !S.canEdit();
 
 function persist() {
   if (!M.save(s)) toast('Couldn’t save. Phone storage may be full.');
@@ -57,8 +60,11 @@ function render() {
   const ready = s.setup && s.members.length;
   document.body.classList.toggle('setup-mode', !ready);
   if (!ready) { view.innerHTML = setupView(); return; }
+  if (!me()) s.me = s.members[0].id;
+  document.body.classList.toggle('readonly', viewOnly());
   if (!VIEWS[tab]) tab = 'home';
   view.innerHTML = VIEWS[tab]();
+  hideEdits(view);
   $$('.tabs button').forEach((b) => {
     const on = b.dataset.tab === tab;
     b.classList.toggle('on', on);
@@ -110,6 +116,11 @@ function setupView() {
           <p class="note">You can plan now and add family later.</p>
           <button class="btn coral wide">Continue</button>
         </form>
+        ${C.configured() ? `<div class="card info">
+          <b>Already on Homzy, or got an invite?</b>
+          <p>Sign in to see your family’s home on this phone.</p>
+          <button class="btn ghost wide" data-action="sync-signin">Sign in or join</button>
+        </div>` : ''}
       </div>`;
   }
   return `
@@ -126,7 +137,7 @@ function setupView() {
           <button class="add-btn" aria-label="Add">${I.plus}</button>
         </form>
       </div>
-      <p class="note">Everyone can tap their name on this phone to claim shopping and accept tasks. Sync across phones comes in a later version.</p>
+      <p class="note">Everyone can tap their name on this phone to claim shopping and accept tasks.${C.configured() ? ' To use Homzy on everyone’s own phone, turn on family sync in the Family tab.' : ''}</p>
       <button class="btn coral wide" data-action="setup-finish">Create our home</button>
     </div>`;
 }
@@ -148,7 +159,7 @@ function homeView() {
   const hello = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
   return `
-    ${head(`<span class="brand-title">Homzy</span>`, `${esc(s.home.name)} · Private`, '<button class="install-btn" data-action="install">Install</button>')}
+    ${head(`<span class="brand-title">Homzy</span>`, `${esc(s.home.name)} · ${S.linked() ? (viewOnly() ? 'View only' : 'Shared with family') : 'Private'}`, '<button class="install-btn" data-action="install">Install</button>')}
     <p class="greet">${hello}, ${esc(me().name)}.</p>
 
     ${mine.items.length || mine.tasks.length ? `
@@ -418,10 +429,7 @@ function familyView() {
         <button class="add-btn" aria-label="Add">${I.plus}</button>
       </form></li>
     </ul>
-    <div class="card info">
-      <b>Invite another adult</b>
-      <p>Private invite links with their own account come with family sync. Until then, share the list on WhatsApp or use this phone together.</p>
-    </div>
+    ${syncCard()}
 
     ${section('Our meals', `<button class="link" data-action="recipe-new">${I.plus} Add a recipe</button>`)}
     <ul class="card rows">
@@ -439,15 +447,18 @@ function familyView() {
     <div class="card stack-sm">
       <button class="menu-row" data-action="settings">Home name, portions & voice ${I.chev}</button>
       <button class="menu-row" data-action="backup">Download a backup ${I.chev}</button>
-      <button class="menu-row" data-action="restore-file">Restore from backup ${I.chev}</button>
-      <button class="menu-row danger" data-action="reset">Delete this home’s data ${I.chev}</button>
+      ${viewOnly() ? '' : `<button class="menu-row" data-action="restore-file">Restore from backup ${I.chev}</button>`}
+      ${S.linked() ? `<button class="menu-row" data-action="sync-signout">Sign out of this phone ${I.chev}</button>`
+        : `<button class="menu-row danger" data-action="reset">Delete this home’s data ${I.chev}</button>`}
     </div>
 
     ${section('Help us improve')}
     <div class="card stack-sm">
       <button class="menu-row" data-action="feedback">Send feedback or report a problem ${I.chev}</button>
     </div>
-    <p class="note plain center">Your lists, meals and bills stay on this phone. Only feedback you choose to send is uploaded.</p>`;
+    <p class="note plain center">${S.linked()
+      ? 'Your home is saved online so your family can see it on their phones. Only people you invite can open it.'
+      : 'Your lists, meals and bills stay on this phone. Only feedback you choose to send is uploaded.'}</p>`;
 }
 
 // ----- Week: nutrition and food spend -----
@@ -1006,6 +1017,517 @@ function reviewSheet({ items, total, shop }) {
     </form>`, { tall: true });
 }
 
+// ---------- Family sync: sign in, invite, who has access ----------
+const VIEW_OK = new Set(['tab', 'close-sheet', 'toast-action', 'switch', 'be', 'lang', 'step', 'list-mode', 'item', 'task', 'meal',
+  'check-week', 'recipe', 'bills', 'week-prev', 'week-next', 'feedback', 'fb-snooze', 'settings', 'backup', 'install']);
+const VIEW_FORMS = new Set(['feedback', 'settings']);
+const viewOnlyToast = () => toast('You can view this home but not change it. Ask the owner for edit access.');
+const ROLE = { owner: 'Owner', editor: 'Can edit', viewer: 'View only' };
+const INTENT = 'homzy:auth-intent';
+const cleanCode = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+let auth = { email: '', purpose: 'signin', invite: '', sentAt: 0 };
+let pendingHome = null;
+let share = { text: '', link: '' };
+let renderLater = false;
+
+/** View-only: hide buttons and forms that would change the home. */
+function hideEdits(root) {
+  if (!viewOnly()) return;
+  for (const el of root.querySelectorAll('[data-action]')) {
+    const a = el.dataset.action;
+    if (!VIEW_OK.has(a) && !a.startsWith('sync-')) el.hidden = true;
+  }
+  for (const f of root.querySelectorAll('form[data-form]')) {
+    const n = f.dataset.form;
+    if (!VIEW_FORMS.has(n) && !n.startsWith('sync-')) f.hidden = true;
+  }
+}
+new MutationObserver(() => hideEdits($('#sheet-root'))).observe($('#sheet-root'), { childList: true });
+
+function startSync() {
+  M.onSave(() => S.changed());
+  S.start({
+    getState: () => s,
+    setState: (doc) => {
+      const L = S.linked();
+      s = M.adopt(doc, { me: s.me || L?.memberId, lang: s.lang });
+      M.save(s, { quiet: true });
+      dropUndo();
+      softRender();
+    },
+    onStatus: showSyncStatus,
+    onRoleChange: (role) => {
+      softRender();
+      toast(role === 'viewer' ? 'You can now view this home, but not change it.' : 'You can now make changes to this home.');
+    },
+    onRemoved: () => {
+      s = M.wipe(); setupStep = 1; render();
+      openSheet(`<h2 class="sheet-title big">You’re no longer in this home</h2>
+        <p class="note">The owner removed your access or deleted the online copy, so it has been removed from this phone.</p>
+        <button class="btn coral wide" data-action="close-sheet">OK</button>`);
+    },
+  });
+  C.config().then((cfg) => { if (cfg) softRender(); handleLinks(); });
+}
+
+// A change from another phone shouldn't wipe out what you're typing.
+const typing = () => {
+  const a = document.activeElement;
+  return !!a && view.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) && a.value.trim() !== '';
+};
+function softRender() {
+  if (typing()) { renderLater = true; return; }
+  renderLater = false;
+  // Keep focus in an empty box (e.g. "Add an item") across the redraw.
+  const a = document.activeElement;
+  const form = view.contains(a) && a.name ? a.closest('[data-form]')?.dataset.form : null;
+  render();
+  if (form) view.querySelector(`[data-form="${form}"] [name="${a.name}"]`)?.focus({ preventScroll: true });
+}
+view.addEventListener('focusout', () => setTimeout(() => { if (renderLater && !typing()) softRender(); }, 400));
+
+// Undo would bring back the other phone's old data, so drop it once their change arrives.
+function dropUndo() {
+  const el = $('#toast');
+  if (el?._fn) { el.hidden = true; el._fn = null; }
+}
+
+function syncLine() {
+  const st = S.getStatus();
+  const text = st.state === 'syncing' ? 'Syncing…'
+    : st.state === 'offline' ? 'Offline. Changes will sync when you’re back online.'
+    : st.state === 'error' ? st.error || 'Couldn’t sync. Trying again soon.'
+    : st.at ? `Synced · ${timeAgo(st.at)}` : 'Synced';
+  return `<i class="dot ${st.state}" aria-hidden="true"></i><span>${esc(text)}</span>`;
+}
+function showSyncStatus() {
+  const el = $('#sync-status');
+  if (el) el.innerHTML = syncLine();
+}
+
+function syncCard() {
+  if (!C.configured()) {
+    return `<div class="card info"><b>Use Homzy on every phone</b>
+      <p>Family sync isn’t switched on for this site yet. Until then, share the list on WhatsApp or use this phone together.</p></div>`;
+  }
+  const L = S.linked();
+  if (!L) {
+    return `<div class="card info">
+      <b>Use Homzy on every phone</b>
+      <p>Sign in with your email to put this home online. Then invite family to view or edit it from their own phones.</p>
+      <button class="btn coral wide" data-action="sync-start">${I.cloud} Turn on family sync</button>
+    </div>`;
+  }
+  return `<div class="card sync-card">
+    <p class="sync-status" id="sync-status" role="status">${syncLine()}</p>
+    <p class="meta">${esc(C.user()?.email || 'Signed in')} · ${ROLE[L.role] || ''}</p>
+    ${!C.signedIn() ? '<button class="btn coral wide" data-action="sync-signin">Sign in again to keep syncing</button>' : ''}
+    ${S.isOwner() ? `<button class="btn coral wide" data-action="sync-invite">${I.share} Invite family</button>` : ''}
+    <div class="stack-sm">
+      <button class="menu-row" data-action="sync-access">Who can see this home ${I.chev}</button>
+      ${S.isOwner() ? '' : `<button class="menu-row" data-action="sync-leave">Leave this home ${I.chev}</button>`}
+    </div>
+  </div>`;
+}
+
+function authError(msg) {
+  const el = $('#auth-err');
+  if (el) { el.textContent = msg; el.hidden = false; } else toast(msg);
+}
+
+/** Disable a button and change its label while `fn` runs. */
+async function busy(id, label, fn) {
+  const b = $('#' + id);
+  const old = b?.textContent;
+  if (b) { b.disabled = true; b.textContent = label; }
+  try { return await fn(); } finally { if (b?.isConnected) { b.disabled = false; b.textContent = old; } }
+}
+
+const saveIntent = () => { try { localStorage.setItem(INTENT, JSON.stringify({ purpose: auth.purpose, invite: auth.invite, email: auth.email, at: Date.now() })); } catch { /* blocked */ } };
+const clearIntent = () => { try { localStorage.removeItem(INTENT); } catch { /* blocked */ } };
+function restoreIntent() {
+  try {
+    const i = JSON.parse(localStorage.getItem(INTENT) || 'null');
+    if (i && Date.now() - i.at < 3600e3) auth = { ...auth, purpose: i.purpose, invite: i.invite, email: i.email };
+  } catch { /* ignore */ }
+}
+
+function authSheet(purpose = 'signin', invite = '') {
+  auth = { ...auth, purpose, invite: invite || (purpose === 'create' ? '' : auth.invite) };
+  const [title, sub] = {
+    create: ['Turn on family sync', 'We’ll email you a code to sign in. No password needed.'],
+    join: ['Join your family’s home', 'Sign in with your email to accept the invite. No password needed.'],
+    signin: ['Sign in', 'Use the email you signed in with before. Got an invite? Add its code too.'],
+  }[purpose];
+  const replaces = purpose !== 'create' && s.setup && !S.linked();
+  openSheet(`
+    <h2 class="sheet-title big">${title}</h2>
+    <p class="sub">${sub}</p>
+    <form data-form="sync-email" class="stack">
+      <label class="field">Email<input name="email" type="email" autocomplete="email" inputmode="email" value="${esc(auth.email)}" placeholder="you@example.com" maxlength="200" required autofocus></label>
+      ${purpose !== 'create' ? `<label class="field">Invite code${purpose === 'join' ? '' : ' <span class="opt">if you have one</span>'}
+        <input name="invite" value="${esc(auth.invite)}" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" placeholder="e.g. K7MP3QXA"></label>` : ''}
+      ${replaces ? `<p class="note">This phone already has its own Homzy home. Joining replaces it with your family’s home. <button type="button" class="link" data-action="backup">Download a backup first</button></p>` : ''}
+      <p class="note error" id="auth-err" role="alert" hidden></p>
+      <button class="btn coral wide" id="auth-btn">Send code</button>
+    </form>`);
+}
+
+function codeSheet() {
+  openSheet(`
+    <h2 class="sheet-title big">Check your email</h2>
+    <p class="sub">We sent a code to <b>${esc(auth.email)}</b>. It can take a minute, and it may be in spam.</p>
+    <form data-form="sync-code" class="stack">
+      <label class="field">Code<input name="code" class="code-input" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,12}" maxlength="12" required autofocus></label>
+      <p class="note error" id="auth-err" role="alert" hidden></p>
+      <button class="btn coral wide" id="auth-btn">Sign in</button>
+      <div class="btn-row">
+        <button type="button" class="btn ghost" data-action="sync-back">Change email</button>
+        <button type="button" class="btn ghost" data-action="sync-resend">Send again</button>
+      </div>
+      <p class="note plain">Got a link instead of a code? Tap it on this phone and you’ll be signed in.</p>
+    </form>`);
+}
+
+function errorSheet(msg) {
+  openSheet(`<h2 class="sheet-title big">That didn’t work</h2><p class="note">${esc(msg)}</p>
+    <button class="btn coral wide" data-action="close-sheet">OK</button>`);
+}
+
+/** Signed in already: open a "working on it" sheet and carry on. */
+async function continueSignedIn() {
+  openSheet('<h2 class="sheet-title big">Opening your home…</h2><div class="progress"><i style="width:60%"></i></div>');
+  try { await afterSignIn(); } catch (e) { errorSheet(e.message); }
+}
+
+/** After sign-in: join with the invite, open an existing home, or put this one online. Throws on failure. */
+async function afterSignIn() {
+  const { purpose, invite } = auth;
+  clearIntent();
+  let info = await C.rpc('my_household');
+  if (invite && !(info && S.linked()?.hid === info.household_id)) {
+    info = await C.rpc('join_household', { p_code: invite });
+    auth.invite = '';
+  }
+  if (info) {
+    if (S.linked()?.hid === info.household_id) { closeSheet(); toast('Signed in. Syncing again.'); S.run(); render(); return; }
+    if (!invite && s.setup && !S.linked()) { pendingHome = info; return useOnlineSheet(info); }
+    return loadHome(info);
+  }
+  if (purpose === 'create' && s.setup) return createHome();
+  return noHomeSheet();
+}
+
+function useOnlineSheet(info) {
+  openSheet(`
+    <h2 class="sheet-title big">You already have a home online</h2>
+    <p class="note">${esc(C.user()?.email || 'This email')} is part of “${esc(info.name)}”. Use it on this phone? This phone’s own data will be replaced.
+      <button type="button" class="link" data-action="backup">Download a backup first</button></p>
+    <div class="btn-row">
+      <button class="btn ghost" data-action="close-sheet">Not now</button>
+      <button class="btn coral" data-action="sync-use-online">Use it</button>
+    </div>`);
+}
+
+function noHomeSheet() {
+  openSheet(`
+    <h2 class="sheet-title big">No home found</h2>
+    <p class="sub">${esc(C.user()?.email || 'This email')} isn’t part of a Homzy home yet. Ask your family for an invite code.</p>
+    <form data-form="sync-join" class="stack">
+      <label class="field">Invite code<input name="invite" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" placeholder="e.g. K7MP3QXA" required autofocus></label>
+      <p class="note error" id="auth-err" role="alert" hidden></p>
+      <button class="btn coral wide" id="auth-btn">Join</button>
+    </form>
+    ${s.setup ? '' : '<button class="btn ghost wide" data-action="close-sheet">Set up a new home instead</button>'}
+    <button class="link" data-action="sync-switch-email">Use a different email</button>`);
+}
+
+async function loadHome(info) {
+  const row = await C.getHousehold(info.household_id);
+  if (!row) throw new C.CloudError('Couldn’t open that home. Please try again.');
+  s = M.adopt(row.data, { me: info.member_id, lang: s.lang });
+  S.link({ hid: info.household_id, role: info.role, rev: row.rev, base: row.data, memberId: info.member_id });
+  M.save(s, { quiet: true });
+  const known = !!s.me;
+  tab = 'home'; setPref('tab', tab);
+  closeSheet();
+  render();
+  if (!known) whoAmISheet();
+  else toast(`Welcome to ${s.home.name}, ${me().name}`);
+}
+
+async function createHome() {
+  const doc = S.docOf(s);
+  const r = await C.rpc('create_household', { p_name: s.home.name, p_data: doc, p_member_id: s.me });
+  S.link({ hid: r.household_id, role: 'owner', rev: r.rev, base: doc, memberId: s.me });
+  render();
+  openSheet(`
+    <h2 class="sheet-title big">Your home is online</h2>
+    <p class="sub">Changes now sync to everyone you invite. Homzy still works without internet and catches up later.</p>
+    <button class="btn coral wide" data-action="sync-invite">${I.share} Invite family</button>
+    <button class="btn ghost wide" data-action="close-sheet">Later</button>`);
+}
+
+function whoAmISheet() {
+  openSheet(`
+    <h2 class="sheet-title big">Which one are you?</h2>
+    <p class="sub">So your family can see who bought what and who’s doing which task.</p>
+    <div class="who-grid">${s.members.map((m) => `<button class="who" data-action="sync-iam" data-id="${m.id}">${avatar(m, 'lg')}<span>${esc(m.name)}</span></button>`).join('')}</div>
+    ${viewOnly() ? '' : `<form data-form="sync-iam-new" class="inline-add">
+      <input name="name" placeholder="Not listed? Add your name" maxlength="24" autocomplete="off" aria-label="Your name">
+      <button class="add-btn" aria-label="Add">${I.plus}</button>
+    </form>`}`);
+}
+
+function iAm(id) {
+  s.me = id;
+  M.save(s, { quiet: true });
+  C.rpc('set_my_member', { p_member_id: id }).catch(() => { /* it is also kept on this phone */ });
+  closeSheet();
+  render();
+  toast(`Welcome, ${me().name}`);
+}
+
+function inviteSheet() {
+  const others = s.members.filter((m) => m.id !== s.me);
+  openSheet(`
+    <h2 class="sheet-title big">Invite family</h2>
+    <p class="sub">They get a private link that works once, for 7 days.</p>
+    <form data-form="sync-invite" class="stack">
+      <div class="field">Who is it for?
+        <div class="chips">
+          ${others.map((m, i) => `<label class="chip toggle"><input type="radio" name="who" value="${m.id}" ${i === 0 ? 'checked' : ''}>${esc(m.name)}</label>`).join('')}
+          <label class="chip toggle"><input type="radio" name="who" value="new" ${others.length ? '' : 'checked'}>${I.plus} Someone new</label>
+        </div>
+      </div>
+      <label class="field new-name">Their name<input name="name" maxlength="24" placeholder="e.g. Arun" autocomplete="off"></label>
+      <div class="field">What can they do?
+        <div class="chips">
+          <label class="chip toggle"><input type="radio" name="role" value="editor" checked>Can edit</label>
+          <label class="chip toggle"><input type="radio" name="role" value="viewer">View only</label>
+        </div>
+        <span class="hint role-hint">Can edit: add to the list, plan meals, log bills and food from outside. View only: see everything, change nothing.</span>
+      </div>
+      <p class="note error" id="auth-err" role="alert" hidden></p>
+      <button class="btn coral wide" id="auth-btn">Create invite</button>
+    </form>`, { tall: true });
+}
+
+function inviteReadySheet(code, name, role) {
+  const link = `${location.origin}/#join=${code}`;
+  share = {
+    link,
+    text: `${me()?.name || 'Your family'} invited you to “${s.home.name}” on Homzy (${role === 'viewer' ? 'view only' : 'can edit'}).\n`
+      + `Open this link and sign in with your email:\n${link}\n\nInvite code: ${code}. It works once, for 7 days.`,
+  };
+  openSheet(`
+    <h2 class="sheet-title big">Invite for ${esc(name)}</h2>
+    <p class="sub">${ROLE[role]} · works once, for 7 days</p>
+    <p class="code-box" aria-label="Invite code ${code.split('').join(' ')}">${code.slice(0, 4)} ${code.slice(4)}</p>
+    <button class="btn coral wide" data-action="sync-share">${I.share} Send on WhatsApp</button>
+    <button class="btn ghost wide" data-action="sync-copy">${I.copy} Copy link</button>
+    <p class="note plain">Send it only to ${esc(name)}. Anyone with the link can join until it’s used.</p>`);
+}
+
+let accessSeq = 0;
+async function accessSheet() {
+  const L = S.linked();
+  if (!L) return;
+  const seq = ++accessSeq;
+  const owner = S.isOwner();
+  openSheet('<h2 class="sheet-title big">Who can see this home</h2><p class="note plain center">Loading…</p>', { tall: true });
+  try {
+    const [people, invites] = await Promise.all([C.listMembers(L.hid), owner ? C.listInvites(L.hid) : []]);
+    if ($('#sheet-root').hidden || seq !== accessSeq) return; // closed, or a newer refresh is on its way
+    const short = (iso) => new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    openSheet(`
+      <h2 class="sheet-title big">Who can see this home</h2>
+      <ul class="rows">${people.map((p) => {
+        const m = M.member(s, p.member_id);
+        const label = m?.name || p.email || 'Someone';
+        return `<li class="row">${avatar(m || { name: label, hue: 200 })}
+          <span class="row-main static"><b>${esc(label)}${p.user_id === C.user()?.id ? ' <span class="tag">You</span>' : ''}</b>
+            <span class="meta">${esc([p.email, ROLE[p.role]].filter(Boolean).join(' · '))}</span></span>
+          ${owner && p.role !== 'owner' ? `
+            <button class="pill ghost" data-action="sync-role" data-user="${p.user_id}" data-role="${p.role === 'viewer' ? 'editor' : 'viewer'}">${p.role === 'viewer' ? 'Allow edits' : 'Make view only'}</button>
+            <button class="icon-btn quiet" data-action="sync-remove" data-user="${p.user_id}" data-name="${esc(label)}" aria-label="Remove ${esc(label)}">${I.x}</button>` : ''}
+        </li>`;
+      }).join('')}</ul>
+      ${invites.length ? `<h3 class="sec">Invites not used yet</h3>
+      <ul class="rows">${invites.map((i) => {
+        const name = M.firstName(s, i.member_id);
+        return `<li class="row"><span class="row-main static"><b class="mono">${esc(i.code)}</b>
+          <span class="meta">For ${esc(i.member_id ? name : 'someone new')} · ${ROLE[i.role]} · until ${short(i.expires_at)}</span></span>
+          <button class="pill ghost" data-action="sync-reshare" data-code="${esc(i.code)}" data-name="${esc(i.member_id ? name : 'someone new')}" data-role="${i.role}">Send</button>
+          <button class="icon-btn quiet" data-action="sync-revoke" data-code="${esc(i.code)}" aria-label="Cancel invite ${esc(i.code)}">${I.x}</button></li>`;
+      }).join('')}</ul>` : ''}
+      ${owner ? `<button class="btn coral wide" data-action="sync-invite">${I.share} Invite someone</button>
+        <button class="menu-row danger" data-action="sync-delete">Stop sharing and delete the online copy ${I.chev}</button>`
+      : '<p class="note plain">Only the person who set up this home can invite people or change access.</p>'}`, { tall: true });
+  } catch (e) {
+    if (seq === accessSeq) errorSheet(e.message);
+  }
+}
+
+function confirmSheet(title, body, yesLabel, yesAction, danger = true) {
+  openSheet(`<h2 class="sheet-title big">${title}</h2><p class="note">${body}</p>
+    <div class="btn-row"><button class="btn ghost" data-action="close-sheet">Cancel</button>
+    <button class="btn ${danger ? 'danger-fill' : 'coral'}" data-action="${yesAction}">${yesLabel}</button></div>`);
+}
+
+async function signOutHere(message) {
+  await C.signOut();
+  S.unlink();
+  s = M.wipe();
+  setupStep = 1; tab = 'home'; setPref('tab', tab);
+  closeSheet();
+  render();
+  toast(message);
+}
+
+async function handleLinks() {
+  const h = location.hash;
+  if (!h || h.length < 2) return;
+  const p = new URLSearchParams(h.slice(1));
+  const join = cleanCode(p.get('join'));
+  const fromEmail = p.get('access_token');
+  const problem = p.get('error_description');
+  if (!join && !fromEmail && !problem) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  if (problem) return errorSheet(problem.replace(/\+/g, ' '));
+  if (!C.configured()) return toast('Family sync isn’t switched on for this site yet.');
+  if (fromEmail) {
+    restoreIntent();
+    openSheet('<h2 class="sheet-title big">Signing you in…</h2><div class="progress"><i style="width:60%"></i></div>');
+    try { await C.fromLink(h); await afterSignIn(); } catch (e) { errorSheet(e.message); }
+    return;
+  }
+  auth.invite = join;
+  if (C.signedIn()) { auth.purpose = 'join'; return continueSignedIn(); }
+  authSheet('join', join);
+}
+
+const SYNC_ACTIONS = {
+  'sync-start': () => { if (C.signedIn()) { auth.purpose = 'create'; auth.invite = ''; continueSignedIn(); } else authSheet('create'); },
+  'sync-signin': () => { if (C.signedIn()) { auth.purpose = 'signin'; continueSignedIn(); } else authSheet('signin'); },
+  'sync-back': () => authSheet(auth.purpose, auth.invite),
+  'sync-switch-email': async () => { await C.signOut(); authSheet(auth.purpose === 'create' ? 'create' : 'signin'); },
+  'sync-resend': async () => {
+    const wait = 60 - Math.round((Date.now() - auth.sentAt) / 1000);
+    if (wait > 0) return authError(`You can ask for a new code in ${wait} seconds.`);
+    try { await C.sendCode(auth.email); auth.sentAt = Date.now(); toast('New code sent'); } catch (e) { authError(e.message); }
+  },
+  'sync-use-online': async () => { try { await loadHome(pendingHome); } catch (e) { errorSheet(e.message); } },
+  'sync-iam': (el) => iAm(el.dataset.id),
+  'sync-invite': () => inviteSheet(),
+  'sync-share': () => {
+    if (navigator.share) navigator.share({ text: share.text }).catch(() => {});
+    else window.open('https://wa.me/?text=' + encodeURIComponent(share.text), '_blank', 'noopener');
+  },
+  'sync-copy': async () => {
+    try { await navigator.clipboard.writeText(share.text); toast('Invite copied. Paste it in a message.'); }
+    catch { toast(share.link); }
+  },
+  'sync-reshare': (el) => inviteReadySheet(el.dataset.code, el.dataset.name, el.dataset.role),
+  'sync-access': () => accessSheet(),
+  'sync-role': async (el) => {
+    try {
+      await C.rpc('set_member_role', { p_user: el.dataset.user, p_role: el.dataset.role });
+      toast(el.dataset.role === 'viewer' ? 'Changed to view only' : 'They can edit now');
+      accessSheet();
+    } catch (e) { toast(e.message); }
+  },
+  'sync-remove': async (el) => {
+    try {
+      await C.rpc('remove_member', { p_user: el.dataset.user });
+      toast(`${el.dataset.name} can no longer open this home`);
+      accessSheet();
+    } catch (e) { toast(e.message); }
+  },
+  'sync-revoke': async (el) => {
+    try { await C.rpc('revoke_invite', { p_code: el.dataset.code }); toast('Invite cancelled'); accessSheet(); } catch (e) { toast(e.message); }
+  },
+  'sync-delete': () => confirmSheet('Delete the online copy?',
+    'Everyone you invited loses access, and their phones remove this home. This phone keeps its own copy, so nothing is lost here.',
+    'Delete online copy', 'sync-delete-yes'),
+  'sync-delete-yes': async () => {
+    try {
+      await C.rpc('delete_household');
+      S.unlink();
+      closeSheet(); render();
+      toast('Online copy deleted. This phone still has everything.');
+    } catch (e) { errorSheet(e.message); }
+  },
+  'sync-signout': async () => {
+    await S.run().catch(() => {});
+    const unsent = S.pending();
+    confirmSheet('Sign out of this phone?',
+      `${unsent ? '<b>Some changes haven’t uploaded yet and will be lost.</b> Connect to the internet first if you can. ' : ''}`
+      + `“${esc(s.home.name)}” stays online for your family. This phone’s copy is removed until you sign in again.`,
+      'Sign out', 'sync-signout-yes');
+  },
+  'sync-signout-yes': () => signOutHere('Signed out. Your home is still online for your family.'),
+  'sync-leave': () => confirmSheet('Leave this home?',
+    `You’ll stop seeing “${esc(s.home.name)}”, and it’s removed from this phone. The owner can invite you again.`,
+    'Leave', 'sync-leave-yes'),
+  'sync-leave-yes': async () => {
+    try { await C.rpc('leave_household'); await signOutHere('You left the home.'); } catch (e) { errorSheet(e.message); }
+  },
+};
+
+const SYNC_FORMS = {
+  'sync-email': async (f, d) => {
+    const email = d.email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return authError('Please enter a valid email address.');
+    const invite = cleanCode(d.invite);
+    if (invite && invite.length !== 8) return authError('Invite codes have 8 letters and numbers.');
+    auth.email = email; auth.invite = invite;
+    saveIntent();
+    try {
+      await busy('auth-btn', 'Sending…', () => C.sendCode(email));
+      auth.sentAt = Date.now();
+      codeSheet();
+    } catch (e) { authError(e.message); }
+  },
+  'sync-code': async (f, d) => {
+    const code = d.code.replace(/\D/g, '');
+    if (code.length < 6) return authError('Enter the code from the email.');
+    try {
+      await busy('auth-btn', 'Checking…', async () => { await C.verifyCode(auth.email, code); await afterSignIn(); });
+    } catch (e) { authError(e.message); }
+  },
+  'sync-join': async (f, d) => {
+    const invite = cleanCode(d.invite);
+    if (invite.length !== 8) return authError('Invite codes have 8 letters and numbers.');
+    auth.invite = invite;
+    try { await busy('auth-btn', 'Joining…', afterSignIn); } catch (e) { authError(e.message); }
+  },
+  'sync-iam-new': (f, d) => {
+    const n = d.name.trim();
+    if (!n) return;
+    const m = commit(null, () => M.addMember(s, n));
+    if (m) iAm(m.id);
+  },
+  'sync-invite': async (f, d) => {
+    const role = d.role === 'viewer' ? 'viewer' : 'editor';
+    let memberId = d.who && d.who !== 'new' ? d.who : null;
+    let name = memberId ? M.firstName(s, memberId) : d.name.trim();
+    if (!memberId) {
+      if (!name) { f.name.focus(); return authError('Type their name, so the family knows who joined.'); }
+      const m = commit(null, () => M.addMember(s, name));
+      memberId = m?.id || null;
+      name = m?.name || name;
+    }
+    try {
+      const code = await busy('auth-btn', 'Creating…', async () => {
+        await S.run(); // make sure their name is online before they join
+        return C.rpc('create_invite', { p_role: role, p_member_id: memberId });
+      });
+      inviteReadySheet(code, name, role);
+    } catch (e) { authError(e.message); }
+  },
+};
+
 // ---------- Actions ----------
 const byId = (arr, id) => arr.find((x) => x.id === id);
 const after = (el, fn) => { if (el.dataset.keep) fn?.(); else if (el.dataset.close) closeSheet(); };
@@ -1154,14 +1676,16 @@ const ACTIONS = {
       <p class="note">This removes all lists, plans, tasks and bills from this phone. Download a backup first if you might need them.</p>
       <div class="btn-row"><button class="btn ghost" data-action="close-sheet">Keep it</button><button class="btn danger-fill" data-action="reset-yes">Delete</button></div>`);
   },
+  ...SYNC_ACTIONS,
   'reset-yes': () => { closeSheet(); s = M.fresh(); setupStep = 1; setupDraft = { home: 'Our home', name: '', people: 4, dinners: SETUP_DINNERS.slice(0, 3), others: [] }; persist(); },
 };
 
 document.addEventListener('click', (e) => {
-  if (e.target.closest('#mic')) return startListening();
+  if (e.target.closest('#mic')) return viewOnly() ? viewOnlyToast() : startListening();
   const el = e.target.closest('[data-action]');
   if (!el) return;
   const fn = ACTIONS[el.dataset.action];
+  if (fn && viewOnly() && !VIEW_OK.has(el.dataset.action) && !el.dataset.action.startsWith('sync-')) { e.preventDefault(); return viewOnlyToast(); }
   if (fn) { e.preventDefault(); fn(el); }
 });
 
@@ -1266,8 +1790,10 @@ const FORMS = {
     closeSheet();
     commit(`Saved ${rupees(total)} bill`, () => M.saveBill(s, { shop: d.shop.trim(), total, lines: [] }));
   },
+  ...SYNC_FORMS,
   settings: (f, d) => {
     closeSheet();
+    if (viewOnly()) { s.lang = d.lang || s.lang; M.save(s, { quiet: true }); return toast('Voice language saved'); }
     commit('Settings saved', () => {
       s.home.name = d.home.trim() || 'Our home';
       s.home.people = +d.people || s.home.people;
@@ -1280,6 +1806,7 @@ document.addEventListener('submit', (e) => {
   const f = e.target.closest('[data-form]');
   if (!f) return;
   e.preventDefault();
+  if (viewOnly() && !VIEW_FORMS.has(f.dataset.form) && !f.dataset.form.startsWith('sync-')) return viewOnlyToast();
   FORMS[f.dataset.form]?.(f, Object.fromEntries(new FormData(f)));
 });
 
@@ -1325,6 +1852,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { re
 if (!pref('first-seen', '')) setPref('first-seen', String(Date.now()));
 render();
 flushOutbox();
+startSync();
 
 // Home-screen shortcuts: ?do=speak / ?do=scan
 const shortcut = new URLSearchParams(location.search).get('do');

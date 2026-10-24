@@ -446,3 +446,18 @@ body.locked #toast, body.setup-mode #toast { bottom: calc(24px + var(--safe-b));
   .act { font-size: 16px; }
   .pair .pill { padding: 0 10px; font-size: 14px; }
 }
+
+/* Family sync */
+.sync-card { gap: 10px; }
+.sync-status { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--muted); }
+.dot.ok { background: var(--green); }
+.dot.syncing { background: var(--sun-ink); }
+.dot.error { background: var(--danger); }
+.note.error { background: var(--coral-soft); color: var(--coral-text); }
+.code-input { letter-spacing: .3em; font-size: 24px !important; font-weight: 700 !important; text-align: center; }
+.code-box { font: 800 34px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .12em; text-align: center; padding: 18px; border-radius: 16px; background: var(--surface-2); color: var(--ink); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .06em; }
+form:not(:has(input[name="who"][value="new"]:checked)) .new-name { display: none; }
+.role-hint { font-weight: 500; }
+body.readonly .actions, body.readonly #view .inline-add { display: none; }

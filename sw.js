@@ -1,10 +1,10 @@
 // Homzy service worker: works offline after the first visit.
 // Bump VERSION whenever app files change so phones pick up the update.
-const VERSION = 'homzy-v3';
+const VERSION = 'homzy-v4';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/app.js', 'js/model.js', 'js/ui.js', 'js/data.js', 'js/parse.js', 'js/speech.js', 'js/scan.js',
-  'js/nutrition.js', 'js/feedback.js',
+  'js/nutrition.js', 'js/feedback.js', 'js/cloud.js', 'js/sync.js',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 const RUNTIME = 'homzy-runtime'; // bill reader files from the CDN
@@ -26,7 +26,8 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  // The feedback API always goes to the network.
+  // The API (feedback, sync config) always goes to the network. Supabase calls are
+  // cross-origin and are never cached.
   if (url.origin === location.origin && url.pathname.startsWith('/api/')) return;
 
   // App files: answer from cache at once, refresh the cache in the background.

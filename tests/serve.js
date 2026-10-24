@@ -1,6 +1,7 @@
 // Local server that behaves like Vercel: static files with vercel.json headers,
-// plus /api/feedback. Run: npm start  (or MOCK_SUPABASE=1 npm start to test
-// feedback without a real database; rows print in this terminal).
+// plus /api/feedback and /api/config. Run: npm start
+// MOCK_SUPABASE=1 npm start fakes Supabase in memory, so feedback and family sync
+// work without a real project. Sign-in codes print here (always 123456).
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -19,6 +20,8 @@ if (process.env.MOCK_SUPABASE) {
   process.env.SUPABASE_SECRET_KEY = 'sb_secret_local_mock';
 }
 const { default: feedback } = await import('../api/feedback.js');
+const { default: cloudConfig } = await import('../api/config.js');
+const { mockSupabase } = await import('./mock-supabase.js');
 
 // vercel.json "source" patterns → RegExp (enough for the patterns we use).
 const rules = config.headers.map((h) => ({ re: new RegExp('^' + h.source.replace(/\./g, '\\.').replace(/\(\\\.\*\)/g, '(.*)') + '$'), headers: h.headers }));
@@ -40,6 +43,12 @@ http.createServer(async (req, res) => {
   if (url.pathname === '/__mock_supabase/rest/v1/feedback') {
     console.log('[mock supabase] insert', raw);
     res.statusCode = 201; return res.end();
+  }
+  if (process.env.MOCK_SUPABASE && url.pathname.startsWith('/__mock_supabase/')) return mockSupabase(req, res, url, raw);
+  if (url.pathname === '/api/config') {
+    // Mock mode: point each origin (localhost, 127.0.0.1…) at its own mock, so two "phones" can share it.
+    if (process.env.MOCK_SUPABASE) return shim(res).json({ sync: true, url: `http://${req.headers.host}/__mock_supabase`, key: 'sb_publishable_mock' });
+    return cloudConfig(req, shim(res));
   }
   if (url.pathname === '/api/feedback') {
     try { req.body = raw && String(req.headers['content-type']).includes('json') ? JSON.parse(raw) : raw; } catch { req.body = raw; }
