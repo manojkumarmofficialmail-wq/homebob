@@ -2,6 +2,8 @@ import * as M from './model.js';
 import { CATALOG, SETUP_DINNERS, QUICK_ADD } from './data.js';
 import { parseSpeech } from './parse.js';
 import { canListen, listen, speechError } from './speech.js';
+import * as N from './nutrition.js';
+import { sendFeedback, flushOutbox } from './feedback.js';
 import {
   $, $$, esc, rupees, plural, I, avatar, dayName, weekday, dayNum, longDate, timeAgo, fmtTime, isoOf,
   openSheet, closeSheet, toast, runToastAction,
@@ -9,6 +11,11 @@ import {
 
 const { today, addDays } = M;
 const SLOTS = { b: 'Breakfast', l: 'Lunch', d: 'Dinner' };
+const EAT_SLOTS = { b: 'Breakfast', l: 'Lunch', s: 'Snack', d: 'Dinner' };
+const FEEDBACK_KINDS = { idea: 'An idea', problem: 'Something’s wrong', praise: 'I like it', other: 'Other' };
+const FACES = ['😞', '🙁', '😐', '🙂', '😍'];
+const FACE_LABELS = ['Very bad', 'Bad', 'Okay', 'Good', 'Love it'];
+const num0 = (n) => Math.round(n || 0).toLocaleString('en-IN');
 const LANGS = { 'en-IN': 'English', 'ml-IN': 'മലയാളം', 'hi-IN': 'हिंदी', 'ta-IN': 'தமிழ்' };
 const REPEAT = { none: 'Once', daily: 'Every day', weekly: 'Every week' };
 const TASK_IDEAS = ['Cook dinner', 'Clean up after dinner', 'Buy groceries', 'Wash clothes', 'Pay electricity bill', 'Water the plants'];
@@ -20,6 +27,7 @@ const setPref = (k, v) => { try { localStorage.setItem('homzy:' + k, v); } catch
 let tab = pref('tab', 'home');
 let planSlot = pref('slot', 'd');
 let listMode = 'active';
+let weekOffset = 0; // 0 = this week, -1 = last week…
 let setupStep = 1;
 let setupDraft = { home: 'Our home', name: '', people: 4, dinners: SETUP_DINNERS.slice(0, 3), others: [] };
 
@@ -183,10 +191,45 @@ function homeView() {
     ${tasks.length ? `<ul class="card rows">${tasks.map(taskRow).join('')}</ul>`
       : `<div class="card empty-card"><p>Nothing due today.</p><div class="chips">${TASK_IDEAS.slice(0, 3).map((x) => `<button class="chip" data-action="task-new" data-title="${esc(x)}">${I.plus}${esc(x)}</button>`).join('')}</div></div>`}
 
-    <button class="card spend-row" data-action="bills">
-      <span><span class="eyebrow plain">${new Date().toLocaleDateString('en-IN', { month: 'long' })} spend</span><b class="big">${rupees(spend)}</b></span>
-      <span class="muted small">${s.bills.filter((b) => b.date.startsWith(ym)).length ? plural(s.bills.filter((b) => b.date.startsWith(ym)).length, 'bill') : 'Scan a bill to track'} ${I.chev}</span>
-    </button>`;
+    ${section('This week', `<button class="link" data-action="outside-new">${I.plus} Ate outside</button>`)}
+    ${weekCard(spend, M.monthOutside(s, ym))}
+    ${feedbackPrompt()}`;
+}
+
+function weekCard(monthGroceries, monthOut) {
+  const w = N.weekSummary(s, N.weekStart());
+  const protein = N.status('protein', w.total.protein, w.guide.protein);
+  const recorded = w.homeMeals + w.outMeals;
+  const month = new Date().toLocaleDateString('en-IN', { month: 'long' });
+  return `
+    <button class="card week-card" data-action="tab" data-tab="week">
+      <span class="wk-col">
+        <span class="eyebrow plain">Family ate</span>
+        <b class="big">${recorded ? num0(w.total.kcal) : '—'}<small> kcal</small></b>
+        <span class="meta">${recorded ? `Protein ${protein.label.toLowerCase()} · ${plural(recorded, 'meal')}` : 'Plan meals to see nutrition'}</span>
+      </span>
+      <span class="wk-col">
+        <span class="eyebrow plain">Food spend</span>
+        <b class="big">${rupees(w.spend.total)}</b>
+        <span class="meta">${w.spend.outside ? `${rupees(w.spend.outside)} outside` : 'Nothing outside yet'}</span>
+      </span>
+      <span class="wk-chev">${I.chev}</span>
+    </button>
+    <p class="note plain small">${month}: groceries ${rupees(monthGroceries)} · outside ${rupees(monthOut)}</p>`;
+}
+
+// Ask for feedback once the family has used Homzy for a couple of days.
+function feedbackPrompt() {
+  const first = +pref('first-seen', 0);
+  const snooze = +pref('fb-snooze', 0);
+  if (!first || Date.now() - first < 2 * 864e5 || pref('fb-done', '') || Date.now() < snooze) return '';
+  return `
+    <section class="card fb-card">
+      <p class="eyebrow">${I.chat} Help us improve</p>
+      <b class="fb-q">How is Homzy working for your family?</b>
+      <div class="faces">${FACES.map((f, i) => `<button class="face" data-action="feedback" data-rating="${i + 1}" aria-label="${FACE_LABELS[i]}">${f}</button>`).join('')}</div>
+      <button class="link muted" data-action="fb-snooze">Not now</button>
+    </section>`;
 }
 
 function sortItems(items) {
@@ -276,11 +319,14 @@ function planView() {
       ${days.map((d) => {
         const m = M.mealAt(s, d, planSlot);
         const r = m && M.recipe(s, m.rid);
+        const out = M.outsideAt(s, d, planSlot);
+        const outText = out.length ? `Ate outside · ${rupees(out.reduce((a, o) => a + o.amount, 0))}` : '';
         return `<li>
           <button class="day-row" data-action="${r ? 'meal' : 'pick'}" data-date="${d}" data-slot="${planSlot}">
             <span class="date-col"><small>${d === today() ? 'TODAY' : weekday(d)}</small><b>${dayNum(d)}</b></span>
             <span class="day-main">
-              ${r ? `<b class="day-meal">${esc(r.name)}</b><span class="meta">${[r.mins && `${r.mins} min`, plural(m.people, 'person', 'people'), 'Edit'].filter(Boolean).join(' · ')}</span>`
+              ${r ? `<b class="day-meal">${esc(r.name)}</b><span class="meta">${outText ? `<span class="out-tag">${outText} instead</span>` : [r.mins && `${r.mins} min`, plural(m.people, 'person', 'people'), 'Edit'].filter(Boolean).join(' · ')}</span>`
+                : out.length ? `<b class="day-meal">Ate outside</b><span class="meta"><span class="out-tag">${outText.replace('Ate outside · ', '')}</span>${out[0].place ? ' · ' + esc(out[0].place) : ''}</span>`
                 : `<b class="day-meal blank">Choose a meal</b><span class="meta">Tap a saved favourite</span>`}
             </span>
           </button>
@@ -396,10 +442,119 @@ function familyView() {
       <button class="menu-row" data-action="restore-file">Restore from backup ${I.chev}</button>
       <button class="menu-row danger" data-action="reset">Delete this home’s data ${I.chev}</button>
     </div>
-    <p class="note plain center">Homzy keeps everything on this phone. Nothing is uploaded.</p>`;
+
+    ${section('Help us improve')}
+    <div class="card stack-sm">
+      <button class="menu-row" data-action="feedback">Send feedback or report a problem ${I.chev}</button>
+    </div>
+    <p class="note plain center">Your lists, meals and bills stay on this phone. Only feedback you choose to send is uploaded.</p>`;
 }
 
-const VIEWS = { home: homeView, plan: planView, list: listView, family: familyView };
+// ----- Week: nutrition and food spend -----
+function weekRange(from) {
+  const a = new Date(from + 'T12:00'), b = new Date(addDays(from, 6) + 'T12:00');
+  const m = (d) => d.toLocaleDateString('en-IN', { month: 'short' });
+  return a.getMonth() === b.getMonth() ? `${a.getDate()}–${b.getDate()} ${m(b)}` : `${a.getDate()} ${m(a)} – ${b.getDate()} ${m(b)}`;
+}
+
+const TONE_ICON = { low: '↓', high: '↑', ok: '✓', none: '' };
+
+function weekView() {
+  const from = addDays(N.weekStart(), weekOffset * 7);
+  const w = N.weekSummary(s, from);
+  const recorded = w.homeMeals + w.outMeals;
+  const title = weekOffset === 0 ? 'This week' : weekOffset === -1 ? 'Last week' : weekRange(from);
+  const tip = N.weekTip(w);
+  const maxDay = Math.max(1, ...w.days.map((d) => d.home + d.out));
+  const outShare = w.spend.total ? Math.round((w.spend.outside / w.spend.total) * 100) : 0;
+  const ym = from.slice(0, 7);
+
+  const nutrientRows = N.NUTRIENTS.map((n) => {
+    const st = N.status(n.k, w.total[n.k], w.guide[n.k]);
+    const width = Math.min(150, st.pct) / 1.5;
+    return `<li class="nut-row">
+      <span class="nut-name">${n.label}</span>
+      <span class="nut-val">${num0(w.total[n.k])} ${n.unit}</span>
+      <span class="meter" role="img" aria-label="${n.label}: ${st.pct}% of guide, ${st.label}"><i style="width:${width}%"></i><b class="guide-tick"></b></span>
+      <span class="nut-st tone-${st.tone}">${TONE_ICON[st.tone]} ${st.label}<small> · ${st.pct}%</small></span>
+    </li>`;
+  }).join('');
+
+  const bars = w.days.map((d) => {
+    const total = d.home + d.out;
+    const h = (v) => (v / maxDay) * 100;
+    const label = `${dayName(d.date)}: ${d.future ? 'not yet' : `${num0(total)} kcal (home ${num0(d.home)}, outside ${num0(d.out)})`}`;
+    return `<button class="day-bar ${d.future ? 'future' : ''} ${d.date === today() ? 'is-today' : ''}" data-tip="${esc(label)}" aria-label="${esc(label)}">
+      <span class="stack-col">${d.out ? `<i class="seg out" style="height:${h(d.out)}%"></i>` : ''}${d.home ? `<i class="seg home" style="height:${h(d.home)}%"></i>` : ''}</span>
+      <small>${weekday(d.date).slice(0, 2)}</small>
+    </button>`;
+  }).join('');
+
+  return `
+    ${head(title, `${weekRange(from)} · Nutrition & food spend`)}
+    <div class="week-nav">
+      <button class="icon-btn" data-action="week-prev" aria-label="Previous week">${I.back}</button>
+      <span>${weekOffset === 0 ? 'Mon–Sun, so far' : weekRange(from)}</span>
+      <button class="icon-btn" data-action="week-next" aria-label="Next week" ${weekOffset >= 0 ? 'disabled' : ''}>${I.chev}</button>
+    </div>
+
+    <section class="card">
+      <p class="eyebrow">What the family ate</p>
+      ${recorded ? `
+        <b class="big-num">${num0(w.total.kcal)}<small> kcal</small></b>
+        <p class="meta">${plural(w.homeMeals, 'home meal')} · ${plural(w.outMeals, 'meal')} outside${w.emptySlots ? ` · ${w.emptySlots} not recorded` : ''}</p>
+        <ul class="nut-list">${nutrientRows}</ul>
+        <p class="hint">Bars compare with what these meals should give an adult (ICMR-NIN guide). The line marks 100%.</p>
+        <div class="chart" aria-label="Calories by day">
+          <div class="legend"><span><i class="sw home"></i>Home</span><span><i class="sw out"></i>Outside</span></div>
+          <div class="day-bars">${bars}</div>
+          <p class="chart-read" id="chart-read">Tap a day to see its calories.</p>
+          <details class="table-view"><summary>Show as table</summary>
+            <table><thead><tr><th>Day</th><th>Home</th><th>Outside</th></tr></thead><tbody>
+            ${w.days.filter((d) => !d.future).map((d) => `<tr><td>${dayName(d.date)}</td><td>${num0(d.home)} kcal</td><td>${num0(d.out)} kcal</td></tr>`).join('')}
+            </tbody></table>
+          </details>
+        </div>`
+      : `<p class="empty-title">Nothing recorded yet</p>
+         <p class="meta">Plan meals in the Plan tab, or log food from outside. Homzy works out the nutrition from the ingredients.</p>
+         <button class="btn sage wide" data-action="tab" data-tab="plan">Plan meals</button>`}
+      ${w.unknownMeals ? `<p class="note">${plural(w.unknownMeals, 'meal has', 'meals have')} no ingredients yet, so ${w.unknownMeals === 1 ? 'it isn’t' : 'they aren’t'} counted. Add ingredients in Family → Our meals.</p>` : ''}
+      ${w.missing.length ? `<p class="hint">No nutrition data for: ${esc(w.missing.slice(0, 5).join(', '))}${w.missing.length > 5 ? '…' : ''}</p>` : ''}
+    </section>
+
+    ${tip ? `<div class="card info"><b>This week’s tip</b><p>${esc(tip)}</p></div>` : ''}
+
+    <section class="card">
+      <p class="eyebrow">Food spend</p>
+      <b class="big-num">${rupees(w.spend.total)}</b>
+      ${w.spend.total ? `
+        <div class="split" role="img" aria-label="Groceries ${rupees(w.spend.groceries)}, outside ${rupees(w.spend.outside)}">
+          ${w.spend.groceries ? `<i class="seg home" style="flex:${w.spend.groceries}"></i>` : ''}${w.spend.outside ? `<i class="seg out" style="flex:${w.spend.outside}"></i>` : ''}
+        </div>
+        <div class="split-legend">
+          <span><i class="sw home"></i>Groceries <b>${rupees(w.spend.groceries)}</b></span>
+          <span><i class="sw out"></i>Outside <b>${rupees(w.spend.outside)}</b> <small>${outShare}%</small></span>
+        </div>` : '<p class="meta">Scan a grocery bill or log food from outside to see where food money goes.</p>'}
+      ${Object.keys(w.spend.byKind).length ? `<ul class="rows">${Object.entries(w.spend.byKind).sort((a, b) => b[1].amount - a[1].amount).map(([k, v]) => `
+        <li class="row slim"><span class="row-main static"><b>${esc(N.OUTSIDE_KINDS[k] || k)}</b><span class="meta">${plural(v.count, 'time')}</span></span><b>${rupees(v.amount)}</b></li>`).join('')}</ul>` : ''}
+      <p class="meta">${new Date(from + 'T12:00').toLocaleDateString('en-IN', { month: 'long' })}: groceries ${rupees(M.monthSpend(s, ym))} · outside ${rupees(M.monthOutside(s, ym))}</p>
+      <div class="btn-row">
+        <button class="btn ghost" data-action="bills">Grocery bills</button>
+        <button class="btn coral" data-action="outside-new">${I.plus} Ate outside</button>
+      </div>
+    </section>
+
+    ${w.outside.length ? `${section('Outside this week')}
+    <ul class="card rows">${w.outside.map((o) => `<li class="row">
+      <span class="row-main static"><b>${esc(o.place || N.OUTSIDE_KINDS[o.kind] || 'Outside')}</b>
+        <span class="meta">${dayName(o.date)} · ${EAT_SLOTS[o.slot]} · ${plural(o.people, 'person', 'people')} · ${N.OUTSIDE_WEIGHT[o.weight] || ''}</span></span>
+      <b>${rupees(o.amount)}</b>
+      <button class="icon-btn quiet" data-action="outside-remove" data-id="${o.id}" aria-label="Delete">${I.x}</button>
+    </li>`).join('')}</ul>` : ''}
+    <p class="note plain">Nutrition is an estimate from recipe ingredients and typical values for Indian foods. Outside meals use rough averages. It is a guide for the family, not medical advice.</p>`;
+}
+
+const VIEWS = { home: homeView, plan: planView, list: listView, week: weekView, family: familyView };
 
 // ---------- Sheets ----------
 function switchSheet() {
@@ -414,6 +569,8 @@ function switchSheet() {
     </form>`);
 }
 
+const kcalPer = (r) => { const n = N.recipeNutrition(r, 4); return n.counted ? `${num0(n.perPerson.kcal)} kcal` : ''; };
+
 // ----- Pick a meal -----
 function pickSheet(date, slot) {
   const current = M.mealAt(s, date, slot)?.rid;
@@ -425,7 +582,7 @@ function pickSheet(date, slot) {
     const rest = all.filter((r) => !s.favs.includes(r.id) && match(r))
       .sort((a, b) => (b.slots.includes(slot) - a.slots.includes(slot)) || a.name.localeCompare(b.name));
     const btn = (r) => `<li><button class="pick ${r.id === current ? 'on' : ''}" data-action="set-meal" data-rid="${r.id}">
-      <span><b>${esc(r.name)}</b><span class="meta">${[r.mins && `${r.mins} min`, r.veg === false ? 'Non-veg' : 'Veg'].filter(Boolean).join(' · ')}</span></span>${r.id === current ? I.check : ''}</button></li>`;
+      <span><b>${esc(r.name)}</b><span class="meta">${[r.mins && `${r.mins} min`, r.veg === false ? 'Non-veg' : 'Veg', kcalPer(r)].filter(Boolean).join(' · ')}</span></span>${r.id === current ? I.check : ''}</button></li>`;
     return `
       ${favs.length ? `<li class="pick-head">Favourites</li>${favs.map(btn).join('')}` : ''}
       ${rest.length ? `<li class="pick-head">${k ? 'Matches' : SLOTS[slot] + ' ideas'}</li>${rest.slice(0, 40).map(btn).join('')}` : ''}
@@ -483,7 +640,8 @@ function drawCheckSheet(keepOpen) {
           <button data-action="meal-people" data-d="1" aria-label="More people">${I.plus}</button>
         </div>
         ${r.mins ? `<span class="muted">${I.clock} ${r.mins} min</span>` : ''}
-      </div>`;
+      </div>
+      ${nutritionChips(r, m.people)}`;
   } else {
     top = `<h2 class="sheet-title big">Check ingredients</h2>
       <p class="sub">${ctx.meals.map((x) => esc(M.recipe(s, M.mealAt(s, x.date, x.slot).rid).name)).join(' · ')}</p>`;
@@ -517,6 +675,17 @@ function drawCheckSheet(keepOpen) {
     sh.scrollTop = y;
   } else openSheet(html, { tall: true });
   checkCtx.rows = rows;
+}
+
+function nutritionChips(r, people) {
+  const n = N.recipeNutrition(r, people);
+  if (!n.counted) return '';
+  const p = n.perPerson;
+  return `<div class="nut-chips" aria-label="Nutrition per person">
+      <span><b>${num0(p.kcal)}</b> kcal</span><span><b>${num0(p.protein)} g</b> protein</span>
+      <span><b>${num0(p.carbs)} g</b> carbs</span><span><b>${num0(p.fat)} g</b> fat</span><span><b>${num0(p.fibre)} g</b> fibre</span>
+    </div>
+    <p class="hint">Per person, estimated${n.missing.length ? ` · not counted: ${esc(n.missing.join(', '))}` : ''}${n.oilAdded ? ' · includes 2 tsp cooking oil' : ''}</p>`;
 }
 
 // ----- Item detail -----
@@ -659,6 +828,60 @@ function billsSheet() {
     </form>`);
 }
 
+// ----- Food from outside -----
+function outsideSheet(preset = {}) {
+  const slot = preset.slot || M.slotNow();
+  const people = preset.people || s.home.people;
+  openSheet(`
+    <h2 class="sheet-title big">Food from outside</h2>
+    <p class="sub">Restaurants, delivery, tea and snacks. It counts towards the week’s spend and nutrition.</p>
+    <form data-form="outside" class="stack">
+      <div class="chips">${Object.entries(N.OUTSIDE_KINDS).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="kind" value="${k}" ${(preset.kind || 'restaurant') === k ? 'checked' : ''}>${v}</label>`).join('')}</div>
+      <label class="field">Amount ₹<input name="amount" inputmode="decimal" value="${preset.amount ?? ''}" placeholder="e.g. 640" required autofocus></label>
+      <div class="field">Which meal?<div class="chips">${Object.entries(EAT_SLOTS).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="slot" value="${k}" ${slot === k ? 'checked' : ''}>${v}</label>`).join('')}</div></div>
+      <div class="two">
+        <label class="field">When?<input type="date" name="date" value="${preset.date || today()}" max="${today()}"></label>
+        <div class="field">People
+          <div class="stepper sm" data-stepper>
+            <button type="button" data-action="step" data-d="-1" aria-label="Fewer people">${I.minus}</button>
+            <output>${plural(people, 'person', 'people')}</output>
+            <input type="hidden" name="people" value="${people}">
+            <button type="button" data-action="step" data-d="1" aria-label="More people">${I.plus}</button>
+          </div>
+        </div>
+      </div>
+      <div class="field">How heavy was it?
+        <div class="chips">${Object.entries(N.OUTSIDE_WEIGHT).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="weight" value="${k}" ${k === 'regular' ? 'checked' : ''}>${v}</label>`).join('')}</div>
+        <span class="hint">Light: idli, salad, soup. Heavy: biryani, fried food, pizza.</span>
+      </div>
+      <label class="field"><span>Place <span class="opt">optional</span></span><input name="place" value="${esc(preset.place || '')}" placeholder="Swiggy, Paragon, office canteen" maxlength="40"></label>
+      <p class="note plain">If a home meal was planned for the same meal, Homzy counts this one instead.</p>
+      <button class="btn coral wide">Save</button>
+    </form>`, { tall: true });
+}
+
+// ----- Feedback -----
+function feedbackSheet(rating) {
+  openSheet(`
+    <h2 class="sheet-title big">Send feedback</h2>
+    <p class="sub">It goes straight to the Homzy team. We read every message.</p>
+    <form data-form="feedback" class="stack">
+      <div class="field">How is it going?
+        <div class="faces" role="radiogroup" aria-label="Rating">
+          ${FACES.map((f, i) => `<label class="face"><input type="radio" name="rating" value="${i + 1}" ${rating === i + 1 ? 'checked' : ''} aria-label="${FACE_LABELS[i]}"><span>${f}</span></label>`).join('')}
+        </div>
+      </div>
+      <div class="field">What is it about?
+        <div class="chips">${Object.entries(FEEDBACK_KINDS).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="kind" value="${k}" ${k === (rating && rating >= 4 ? 'praise' : 'idea') ? 'checked' : ''}>${v}</label>`).join('')}</div>
+      </div>
+      <label class="field">Your message<textarea name="message" rows="5" maxlength="2000" required placeholder="What would make Homzy better for your home?" ${rating ? 'autofocus' : ''}></textarea></label>
+      <label class="field"><span>Email or phone <span class="opt">optional, only if you want a reply</span></span><input name="contact" maxlength="120" autocomplete="email"></label>
+      <input name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <p class="note plain">We receive your message, rating, app version and household size. Never your lists, meals or bills.</p>
+      <button class="btn coral wide" id="fb-send">Send feedback</button>
+    </form>`, { tall: true });
+}
+
 function settingsSheet() {
   openSheet(`
     <h2 class="sheet-title big">Home settings</h2>
@@ -766,6 +989,10 @@ function reviewSheet({ items, total, shop }) {
     <h2 class="sheet-title big">Check your bill</h2>
     <p class="sub">${listed ? `${plural(listed, 'item')} from your list will be marked bought by you.` : 'Ticked items are saved to your bought history.'}</p>
     <form data-form="review" class="stack">
+      <div class="seg-tabs" role="radiogroup" aria-label="Bill type">
+        <label class="chip toggle"><input type="radio" name="type" value="grocery" checked>Groceries</label>
+        <label class="chip toggle"><input type="radio" name="type" value="outside">Eating out</label>
+      </div>
       <div class="two">
         <label class="field">Shop<input name="shop" value="${esc(shop)}" placeholder="Shop name" maxlength="40"></label>
         <label class="field">Total ₹<input name="total" inputmode="decimal" value="${total ?? ''}" placeholder="0"></label>
@@ -905,6 +1132,14 @@ const ACTIONS = {
   fav: (el) => { const r = M.recipe(s, el.dataset.id); commit(s.favs.includes(r.id) ? `Removed ${r.name} from favourites` : `Saved ${r.name}`, () => M.toggleFav(s, r.id)); after(el); },
   settings: () => settingsSheet(),
   bills: () => billsSheet(),
+
+  // week, outside food, feedback
+  'week-prev': () => { weekOffset--; render(); },
+  'week-next': () => { weekOffset = Math.min(0, weekOffset + 1); render(); },
+  'outside-new': () => outsideSheet(),
+  'outside-remove': (el) => { const o = byId(s.outside, el.dataset.id); commit(`Deleted ${rupees(o.amount)} outside`, () => M.removeOutside(s, o.id)); },
+  feedback: (el) => feedbackSheet(+el.dataset.rating || 0),
+  'fb-snooze': () => { setPref('fb-snooze', String(Date.now() + 14 * 864e5)); render(); },
   'bill-remove': (el) => { const b = byId(s.bills, el.dataset.id); closeSheet(); commit(`Deleted ${rupees(b.total)} bill`, () => { s.bills = s.bills.filter((x) => x !== b); }); },
   backup: () => {
     const blob = new Blob([JSON.stringify(s, null, 1)], { type: 'application/json' });
@@ -992,9 +1227,34 @@ const FORMS = {
     });
     if (date) mealSheet(date, slot); else closeSheet();
   },
+  outside: (f, d) => {
+    const amount = num(d.amount);
+    if (!(amount > 0)) { f.amount.focus(); return; }
+    closeSheet();
+    commit(`Saved ${rupees(amount)} on food outside`, () => M.addOutside(s, { ...d, amount, people: +d.people }));
+  },
+  feedback: async (f, d) => {
+    if (!d.message.trim()) return;
+    const btn = $('#fb-send');
+    btn.disabled = true; btn.textContent = 'Sending…';
+    const result = await sendFeedback({
+      rating: +d.rating || null, kind: d.kind || 'other', message: d.message.trim(), contact: d.contact.trim() || null,
+      website: d.website, screen: tab, household_size: s.home.people, members: s.members.length,
+    });
+    closeSheet();
+    if (result === 'rejected') return toast('Couldn’t send that. Please shorten it and try again.');
+    setPref('fb-done', '1');
+    render();
+    toast(result === 'sent' ? 'Thank you! Your feedback reached us.' : 'Saved. It will send when you’re online.');
+  },
   review: (f, d) => {
     const lines = (review || []).filter((x) => x.on).map(({ name, cat, price }) => ({ name, cat, price }));
     const total = num(d.total);
+    if (d.type === 'outside') {
+      if (!(total > 0)) { f.total.focus(); return; }
+      review = null; // openSheet replaces this sheet in place
+      return outsideSheet({ amount: total, place: d.shop.trim() });
+    }
     closeSheet();
     commit((n) => `${n ? `${plural(n, 'item')} marked bought · ` : ''}${total ? rupees(total) + ' bill saved' : 'Saved'}`,
       () => M.saveBill(s, { shop: d.shop.trim(), total, lines }));
@@ -1037,6 +1297,15 @@ $('#restore').addEventListener('change', async (e) => {
 });
 
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
+
+// Week chart: hovering, tapping or focusing a day shows its numbers.
+const readDay = (e) => {
+  const bar = e.target.closest?.('.day-bar');
+  const out = $('#chart-read');
+  if (bar && out) out.textContent = bar.dataset.tip;
+};
+document.addEventListener('pointerover', readDay);
+document.addEventListener('focusin', readDay);
 $('#catalog').innerHTML = CATALOG.map((c) => `<option value="${esc(c.name)}">`).join('');
 
 // ---------- Install & offline ----------
@@ -1051,9 +1320,11 @@ ACTIONS.install = async () => {
 };
 window.addEventListener('appinstalled', () => { document.body.classList.remove('can-install'); toast('Homzy is on your home screen'); });
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
-document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { render(); flushOutbox(); } });
 
+if (!pref('first-seen', '')) setPref('first-seen', String(Date.now()));
 render();
+flushOutbox();
 
 // Home-screen shortcuts: ?do=speak / ?do=scan
 const shortcut = new URLSearchParams(location.search).get('do');

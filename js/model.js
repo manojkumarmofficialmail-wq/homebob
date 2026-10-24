@@ -31,6 +31,7 @@ export const fresh = () => ({
   bought: [],    // history: { id, name, cat, qty, unit, by, at, price }
   tasks: [],     // { id, title, due, time, assignee, status, by, repeat, declined, doneBy, doneAt }
   bills: [],     // { id, date, shop, total, count, by }
+  outside: [],   // food from outside: { id, date, slot, kind, weight, place, amount, people, by, at }
   log: [],       // { at, by, text }
 });
 
@@ -302,14 +303,14 @@ export function declineItem(s, id) {
 }
 
 /** Record a purchase. Buying less than needed keeps the rest on the list. */
-export function buy(s, id, { qty, price } = {}) {
+export function buy(s, id, { qty, price, bill = null } = {}) {
   const i = item(s, id);
   if (!i) return null;
   const boughtQty = qty != null && i.qty != null ? Math.min(qty, i.qty) : i.qty;
   const partial = i.qty != null && boughtQty != null && boughtQty < i.qty;
   s.bought.unshift({
     id: uid(), itemId: i.id, name: i.name, cat: i.cat, qty: boughtQty, unit: i.unit, note: i.note,
-    by: s.me, at: Date.now(), price: price > 0 ? price : null,
+    by: s.me, at: Date.now(), price: price > 0 ? price : null, bill,
   });
   if (partial) {
     i.qty = +(i.qty - boughtQty).toFixed(2);
@@ -410,18 +411,51 @@ export function listMatch(s, name) {
 /** Save a scanned bill; matching list items are marked bought by you. */
 export function saveBill(s, { shop, total, lines }) {
   let matched = 0;
+  // Line prices belong to the bill, so spend counts the bill total once.
+  const billId = total > 0 ? uid() : null;
   for (const l of lines) {
     const active = listMatch(s, l.name);
-    if (active) { buy(s, active.id, { price: l.price }); matched++; }
-    else s.bought.unshift({ id: uid(), name: l.name, cat: l.cat || catOf(l.name), qty: null, unit: null, by: s.me, at: Date.now(), price: l.price || null });
+    if (active) { buy(s, active.id, { price: l.price, bill: billId }); matched++; }
+    else s.bought.unshift({ id: uid(), name: l.name, cat: l.cat || catOf(l.name), qty: null, unit: null, by: s.me, at: Date.now(), price: l.price || null, bill: billId });
   }
-  if (total > 0) s.bills.push({ id: uid(), date: today(), shop: shop || '', total, count: lines.length, by: s.me });
+  if (total > 0) s.bills.push({ id: billId, date: today(), shop: shop || '', total, count: lines.length, by: s.me });
   log(s, `saved a bill${shop ? ' from ' + shop : ''}`);
   return matched;
 }
 
+/** Grocery spend for a month: bills, plus priced purchases that weren't on a bill. */
 export function monthSpend(s, ym) {
-  return s.bills.filter((b) => b.date.startsWith(ym)).reduce((a, b) => a + (+b.total || 0), 0);
+  const bills = s.bills.filter((b) => b.date.startsWith(ym)).reduce((a, b) => a + (+b.total || 0), 0);
+  const loose = s.bought.filter((b) => b.bill === null && b.price > 0 && iso(new Date(b.at)).startsWith(ym)).reduce((a, b) => a + b.price, 0);
+  return bills + loose;
+}
+
+// ---------- Food from outside ----------
+export const SLOT_KEYS = ['b', 'l', 'd', 's'];
+
+/** Slot that fits the time of day: breakfast, lunch, snack or dinner. */
+export function slotNow(d = new Date()) {
+  const h = d.getHours();
+  return h < 11 ? 'b' : h < 16 ? 'l' : h < 19 ? 's' : 'd';
+}
+
+export function addOutside(s, { date, slot, kind, weight, place, amount, people }) {
+  const o = {
+    id: uid(), date: date || today(), slot: SLOT_KEYS.includes(slot) ? slot : 'd',
+    kind: kind || 'restaurant', weight: weight || 'regular', place: String(place || '').trim().slice(0, 40),
+    amount: Math.max(0, +amount || 0), people: Math.max(1, Math.min(30, Math.round(+people) || 1)), by: s.me, at: Date.now(),
+  };
+  s.outside.push(o);
+  log(s, `logged ₹${Math.round(o.amount)} on food outside${o.place ? ' at ' + o.place : ''}`);
+  return o;
+}
+
+export function removeOutside(s, id) { s.outside = s.outside.filter((o) => o.id !== id); }
+
+export const outsideAt = (s, date, slot) => s.outside.filter((o) => o.date === date && o.slot === slot);
+
+export function monthOutside(s, ym) {
+  return s.outside.filter((o) => o.date.startsWith(ym)).reduce((a, o) => a + (+o.amount || 0), 0);
 }
 
 // ---------- What needs me ----------
