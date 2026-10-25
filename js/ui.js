@@ -37,6 +37,9 @@ export const I = {
   qr: ico('<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2"/>', 'sm'),
   cloud: ico('<path d="M7 18.5h10.5a4 4 0 0 0 .4-7.98A6 6 0 0 0 6.3 9.6 4.5 4.5 0 0 0 7 18.5z"/>'),
   leaf: ico('<path d="M5 19c0-8 5-13 14-14-1 9-6 14-14 14zM5 19l6-6"/>', 'sm'),
+  trash: ico('<path d="M4.5 7h15M9.5 7V4.8a.8.8 0 0 1 .8-.8h3.4a.8.8 0 0 1 .8.8V7M6.5 7l.8 12.2a1 1 0 0 0 1 .8h7.4a1 1 0 0 0 1-.8L17.5 7M10.2 11v5.5M13.8 11v5.5"/>'),
+  cart: ico('<path d="M3 4h2.2l2.1 11h10.4l2-8H6.3"/><circle cx="9" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>'),
+  sun: ico('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>'),
 };
 
 export function avatar(m, size = '') {
@@ -87,11 +90,16 @@ export function openSheet(html, { onMount, onClose, tall } = {}) {
   cleanup = onClose || null;
   if (!pushed) { history.pushState({ sheet: true }, ''); pushed = true; }
   const sheet = $('.sheet', root);
+  const title = sheet.querySelector('h2');
+  if (title) { title.id = 'sheet-title'; sheet.setAttribute('aria-labelledby', 'sheet-title'); }
+  sheet.tabIndex = -1;
+  if (!returnFocus && document.activeElement !== document.body) returnFocus = document.activeElement;
   onMount?.(sheet);
   const first = sheet.querySelector('[autofocus]');
-  if (first) setTimeout(() => first.focus(), 60);
+  setTimeout(() => (first || sheet).focus({ preventScroll: true }), 60);
 }
 
+let returnFocus = null;
 export function closeSheet(silent) {
   const root = sheetRoot();
   if (!root || root.hidden) return;
@@ -100,26 +108,44 @@ export function closeSheet(silent) {
   root.hidden = true;
   root.innerHTML = '';
   document.body.classList.remove('locked');
+  if (silent !== true) {
+    // Back to whatever opened the sheet, if it is still on screen.
+    const el = returnFocus;
+    returnFocus = null;
+    if (el?.isConnected) el.focus({ preventScroll: true });
+  }
   if (!silent && pushed) { pushed = false; history.back(); }
 }
 export const sheetOpen = () => !sheetRoot().hidden;
 
-window.addEventListener('popstate', () => { pushed = false; closeSheet(true); });
+window.addEventListener('popstate', () => { pushed = false; closeSheet('back'); });
 
 // ---------- Toast ----------
 let timer;
 /** Show a message with an optional action button (Undo, Add anyway…). */
+// `action.safe`: the action still makes sense after another phone's changes arrive
+// (putting back one deleted thing), so a sync doesn't cancel it.
+// The toast box stays in the page (an aria-live region is only announced reliably when
+// it already exists); showing and hiding is done with a class.
 export function toast(message, action) {
   const el = $('#toast');
-  el.innerHTML = `<span>${esc(message)}</span>${action ? `<button class="toast-btn" data-action="toast-action">${esc(action.label)}</button>` : ''}`;
   el.hidden = false;
+  el.innerHTML = `<span class="toast-msg">${esc(message)}</span>${action ? `<button class="toast-btn" data-action="toast-action">${esc(action.label)}</button>` : ''}`;
+  el.classList.add('show');
   el._fn = action?.run || null;
+  el._safe = !!action?.safe;
   clearTimeout(timer);
-  timer = setTimeout(() => { el.hidden = true; el._fn = null; }, action ? 6000 : 3200);
+  timer = setTimeout(hideToast, action ? 6500 : 3200);
+}
+export function hideToast() {
+  const el = $('#toast');
+  clearTimeout(timer);
+  el.classList.remove('show');
+  el._fn = null;
+  el._safe = false;
 }
 export function runToastAction() {
-  const el = $('#toast');
-  const fn = el._fn;
-  el.hidden = true; el._fn = null;
+  const fn = $('#toast')._fn;
+  hideToast();
   fn?.();
 }

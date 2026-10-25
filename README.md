@@ -81,6 +81,7 @@ Bump `VERSION` in `sw.js` (and `APP_VERSION` in `js/feedback.js`) on every relea
 - **Phone accounts** are anonymous Supabase accounts kept on the phone. If a phone is reset or Homzy's data is cleared, make that person a new QR code. **The owner's phone holds the owner account**, so keep a backup (Family → Download a backup); a lost owner phone can't manage the others.
 - **One phone, one home.** Disconnecting or being disconnected removes the home from that phone. It stays online for everyone else.
 - **Same-time edits:** each save carries a revision number. If another phone saved first, this phone merges item by item (two people adding to the list both win; a delete beats an edit; if both changed the same field, the later save wins) and saves again.
+- **Deleting:** every list item, task, planned meal, bill and outside-food entry has a bin button (and list rows can be swiped left), with an Undo toast. No tombstones are needed: each phone keeps the last copy it agreed with the server, so the three-way merge sees "was there, now gone" as a delete and keeps it deleted even if another phone edited it at the same time (`tests/sync-delete.test.js` runs the real sync loop for two phones).
 - **What stays on the phone:** who is using this phone and the voice language. Everything else is shared.
 - **Tables:** `households` (one JSON document per home), `household_members` (who has which role), `household_invites`. All writes besides saving the home go through the functions in `schema.sql`, which check the caller's role.
 
