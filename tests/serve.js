@@ -20,6 +20,7 @@ if (process.env.MOCK_SUPABASE) {
   process.env.SUPABASE_SECRET_KEY = 'sb_secret_local_mock';
 }
 const { default: feedback } = await import('../api/feedback.js');
+const { default: survey } = await import('../api/survey.js');
 const { default: cloudConfig } = await import('../api/config.js');
 const { mockSupabase } = await import('./mock-supabase.js');
 
@@ -40,7 +41,7 @@ http.createServer(async (req, res) => {
   for await (const c of req) chunks.push(c);
   const raw = Buffer.concat(chunks).toString();
 
-  if (url.pathname === '/__mock_supabase/rest/v1/feedback') {
+  if (['/__mock_supabase/rest/v1/feedback', '/__mock_supabase/rest/v1/survey_responses'].includes(url.pathname)) {
     console.log('[mock supabase] insert', raw);
     res.statusCode = 201; return res.end();
   }
@@ -50,14 +51,15 @@ http.createServer(async (req, res) => {
     if (process.env.MOCK_SUPABASE) return shim(res).json({ sync: true, url: `http://${req.headers.host}/__mock_supabase`, key: 'sb_publishable_mock' });
     return cloudConfig(req, shim(res));
   }
-  if (url.pathname === '/api/feedback') {
+  if (url.pathname === '/api/feedback' || url.pathname === '/api/survey') {
     try { req.body = raw && String(req.headers['content-type']).includes('json') ? JSON.parse(raw) : raw; } catch { req.body = raw; }
-    return feedback(req, shim(res));
+    return (url.pathname === '/api/survey' ? survey : feedback)(req, shim(res));
   }
 
   let file = path.join(root, decodeURIComponent(url.pathname));
   if (!file.startsWith(root)) { res.statusCode = 403; return res.end(); }
   if (url.pathname === '/') file = path.join(root, 'index.html');
+  if (url.pathname === '/survey') file = path.join(root, 'survey.html'); // vercel.json rewrite
   try {
     const body = await fs.readFile(file);
     res.setHeader('Content-Type', TYPES[path.extname(file)] || 'application/octet-stream');

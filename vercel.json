@@ -2,9 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "cleanUrls": false,
   "trailingSlash": false,
+  "rewrites": [{ "source": "/survey", "destination": "/survey.html" }],
   "functions": {
     "api/feedback.js": { "memory": 128, "maxDuration": 10 },
-    "api/config.js": { "memory": 128, "maxDuration": 5 }
+    "api/config.js": { "memory": 128, "maxDuration": 5 },
+    "api/survey.js": { "memory": 128, "maxDuration": 10 }
   },
   "headers": [
     {

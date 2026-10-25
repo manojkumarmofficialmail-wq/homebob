@@ -454,6 +454,7 @@ function familyView() {
 
     ${section('Help us improve')}
     <div class="card stack-sm">
+      <a class="menu-row" href="/survey">Take the 3-minute family survey ${I.chev}</a>
       <button class="menu-row" data-action="feedback">Send feedback or report a problem ${I.chev}</button>
     </div>
     <p class="note plain center">${S.linked()

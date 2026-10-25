@@ -5,6 +5,7 @@ Meal plans, one shared shopping list, chores, weekly family nutrition and food s
 - **Household data** (lists, meals, bills, outside food) is kept on the phone, in `localStorage`, and works offline.
 - **Family sync** (optional, no email or password): on the Family tab, the owner taps **Connect** next to a family member and a QR code appears. That person scans it with their phone camera and their phone joins the home as **Can edit** or **View only**. Phones sync through Supabase every ~15 seconds while open, and merge changes made at the same time.
 - **Feedback** goes to `/api/feedback`, a Vercel function that saves it in Supabase.
+- **Family survey** at `/survey`: a short tour of the features and 12 quick questions. No login; answers go to Supabase through `/api/survey`.
 
 ## Project layout
 
@@ -17,6 +18,9 @@ Meal plans, one shared shopping list, chores, weekly family nutrition and food s
 | `js/vendor/qrcode.js` | QR code drawing ([qrcode-generator](https://www.npmjs.com/package/qrcode-generator) 1.4.4, MIT) |
 | `js/sync.js` | Family sync: uploads changes, pulls others' changes, three-way merge |
 | `api/feedback.js` | Vercel serverless function: validates, rate-limits, inserts into Supabase |
+| `survey.html`, `js/survey.js`, `js/survey-data.js` | The family survey page and its questions |
+| `api/survey.js` | Checks survey answers and saves them in Supabase |
+| `api/_lib.js` | Shared checks for the API (origin, size, rate limit, insert) |
 | `api/config.js` | Gives the app the Supabase URL and publishable key (refuses secret keys) |
 | `supabase/schema.sql` | Feedback table, plus households, members, invites and their access rules |
 | `vercel.json` | Security headers (CSP etc.) and cache rules |
@@ -73,6 +77,16 @@ Bump `VERSION` in `sw.js` (and `APP_VERSION` in `js/feedback.js`) on every relea
 
 - **Table Editor → feedback**: every message. Use the `status` column (`new`, `read`, `planned`, `done`, `ignored`) to triage.
 - **Table Editor → feedback_weekly**: messages per week, average rating, problems vs ideas, and how many households wrote in.
+
+## Running the family survey
+
+Share `https://<your-site>/survey` on WhatsApp (the app also links to it from **Family → Take the 3-minute family survey**). Read the answers in Supabase **Table Editor**:
+
+- `survey_summary`: number of responses, how many use the app, average "recommend" score, NPS and how many would pay.
+- `survey_features`: for each feature, how many said Useful / Maybe / Not for us, and how many picked it as their favourite.
+- `survey_responses`: every answer, including "what's missing" and "what was confusing". Use the `notes` column for your own notes.
+
+To change the questions, edit `js/survey-data.js`. Feature ids are stored with each answer, so add new ones rather than renaming old ones.
 
 ## How family sync works
 

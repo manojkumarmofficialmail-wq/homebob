@@ -5,3 +5,4 @@ tests/
 supabase/
 README.md
 .env*
+*.mp4

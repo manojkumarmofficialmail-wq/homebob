@@ -3,3 +3,7 @@
 .env.*
 !.env.example
 node_modules/
+
+# Guide video and thumbnail (large, shared directly)
+*.mp4
+homzy-family-guide-thumbnail.png

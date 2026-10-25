@@ -286,3 +286,61 @@ grant execute on function
   public.set_member_role(uuid, text), public.remove_member(uuid), public.revoke_invite(text),
   public.leave_household(), public.delete_household()
 to authenticated;
+
+-- =====================================================================
+-- Part 3: family survey (the /survey page). Like feedback, the browser never
+-- touches this table: /api/survey inserts rows with the secret key.
+-- =====================================================================
+
+create table if not exists public.survey_responses (
+  id             uuid primary key default gen_random_uuid(),
+  created_at     timestamptz not null default now(),
+  used_app       text check (used_app in ('regular', 'tried', 'not_yet')),
+  household_size text check (household_size in ('1-2', '3-4', '5-6', '7+')),
+  planner        text check (planner in ('me', 'spouse', 'parent', 'shared', 'help')),
+  languages      text[] not null default '{}',
+  city           text check (char_length(city) <= 60),
+  ratings        jsonb not null default '{}'::jsonb check (jsonb_typeof(ratings) = 'object'),
+  favourite      text check (char_length(favourite) <= 20),
+  today_methods  text[] not null default '{}',
+  missing        text check (char_length(missing) <= 1500),
+  confusing      text check (char_length(confusing) <= 1500),
+  price          text check (price in ('free', 'm49', 'm99', 'y499', 'unsure')),
+  recommend      smallint check (recommend between 0 and 10),
+  contact        text check (char_length(contact) <= 120),
+  app_version    text check (char_length(app_version) <= 20),
+  install_id     text check (char_length(install_id) <= 64),
+  locale         text check (char_length(locale) <= 20),
+  user_agent     text check (char_length(user_agent) <= 300),
+  notes          text
+);
+create index if not exists survey_responses_created_at_idx on public.survey_responses (created_at desc);
+alter table public.survey_responses enable row level security;
+revoke all on public.survey_responses from anon, authenticated;
+
+-- How each feature was rated (Table Editor → survey_features).
+create or replace view public.survey_features
+with (security_invoker = true) as
+select
+  r.key                                         as feature,
+  count(*) filter (where r.value = 'useful')    as useful,
+  count(*) filter (where r.value = 'maybe')     as maybe,
+  count(*) filter (where r.value = 'no')        as not_for_us,
+  (select count(*) from public.survey_responses s where s.favourite = r.key) as picked_as_favourite
+from public.survey_responses, jsonb_each_text(ratings) r
+group by r.key
+order by useful desc;
+
+-- One-line summary (Table Editor → survey_summary). NPS = % promoters (9–10) minus % detractors (0–6).
+create or replace view public.survey_summary
+with (security_invoker = true) as
+select
+  count(*)                                                    as responses,
+  count(*) filter (where used_app = 'regular')                as using_it,
+  round(avg(recommend)::numeric, 1)                           as avg_recommend,
+  round(100.0 * (count(*) filter (where recommend >= 9) - count(*) filter (where recommend <= 6))
+        / nullif(count(recommend), 0))                        as nps,
+  count(*) filter (where price in ('m49', 'm99', 'y499'))     as would_pay
+from public.survey_responses;
+
+revoke all on public.survey_features, public.survey_summary from anon, authenticated;
