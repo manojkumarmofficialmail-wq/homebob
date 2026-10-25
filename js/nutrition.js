@@ -194,6 +194,22 @@ export function ingredientNutrition({ name, qty, unit }) {
 }
 
 /**
+ * Nutrition for a shopping item while it is being added.
+ * Returns null for non-food or unknown items, else
+ * { name, per100: {kcal…}, grams: number|null, amount: {kcal…}|null }.
+ * `amount` is for the chosen quantity, when it can be turned into grams.
+ */
+export function itemNutrition({ name, qty, unit }) {
+  const row = lookup(name);
+  if (!row) return null;
+  const [kcal, protein, carbs, fat, fibre] = row.v;
+  const per100 = { kcal, protein, carbs, fat, fibre };
+  const g = grams(row, qty, unit);
+  const amount = g == null ? null : addInto(zero(), per100, g / 100);
+  return { name: row.name, per100, grams: g, amount };
+}
+
+/**
  * Nutrition for a recipe cooked for `people`.
  * Returns { total, perPerson, counted, missing: [names], oilAdded }.
  */

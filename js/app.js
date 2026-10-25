@@ -1,5 +1,5 @@
 import * as M from './model.js';
-import { CATALOG, SETUP_DINNERS, QUICK_ADD } from './data.js';
+import { SETUP_DINNERS, QUICK_ADD } from './data.js';
 import { parseSpeech } from './parse.js';
 import { canListen, listen, speechError } from './speech.js';
 import * as N from './nutrition.js';
@@ -8,7 +8,7 @@ import * as C from './cloud.js';
 import * as S from './sync.js';
 import {
   $, $$, esc, rupees, plural, I, avatar, dayName, weekday, dayNum, longDate, timeAgo, fmtTime, isoOf,
-  openSheet, closeSheet, toast, runToastAction,
+  openSheet, closeSheet, toast, hideToast, runToastAction,
 } from './ui.js';
 
 const { today, addDays } = M;
@@ -20,6 +20,7 @@ const FACE_LABELS = ['Very bad', 'Bad', 'Okay', 'Good', 'Love it'];
 const num0 = (n) => Math.round(n || 0).toLocaleString('en-IN');
 const LANGS = { 'en-IN': 'English', 'ml-IN': 'മലയാളം', 'hi-IN': 'हिंदी', 'ta-IN': 'தமிழ்' };
 const REPEAT = { none: 'Once', daily: 'Every day', weekly: 'Every week' };
+const THEMES = { system: 'Like my phone', light: 'Light', dark: 'Dark' };
 const TASK_IDEAS = ['Cook dinner', 'Clean up after dinner', 'Buy groceries', 'Wash clothes', 'Pay electricity bill', 'Water the plants'];
 
 // ---------- State ----------
@@ -38,6 +39,15 @@ const who = (id) => (id === s.me ? 'you' : M.firstName(s, id));
 const Who = (id) => (id === s.me ? 'You' : M.firstName(s, id));
 const viewOnly = () => !S.canEdit();
 
+/** Light or dark, or follow the phone (the default). */
+function applyTheme() {
+  const t = pref('theme', 'system');
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  else delete document.documentElement.dataset.theme;
+  const dark = t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#0f1613' : '#f6f3ec'));
+}
+
 function persist() {
   if (!M.save(s)) toast('Couldn’t save. Phone storage may be full.');
   render();
@@ -51,6 +61,26 @@ function commit(message, change, extra) {
   if (message) toast(typeof message === 'function' ? message(result) : message, { label: 'Undo', run: () => { s = JSON.parse(before); persist(); } });
   extra?.(result);
   return result;
+}
+
+/**
+ * Delete one thing (list item, task, bill…) with a "Removed · Undo" toast.
+ * Undo puts back just that thing, so it still works after a family sync.
+ */
+function removeWithUndo(kind, id, extra) {
+  const removed = kind === 'meal' ? M.clearMeal(s, id.date, id.slot) : M.removeFrom(s, kind, id);
+  if (!removed) return;
+  persist();
+  const label = kind === 'meal' ? M.recipe(s, removed.value.rid)?.name || 'Meal' : removed.label;
+  toast(`Removed ${label}`, {
+    label: 'Undo',
+    safe: true,
+    run: () => {
+      const ok = kind === 'meal' ? M.putBackMeal(s, removed) : M.putBack(s, removed);
+      if (ok) { persist(); toast(`${label} is back`); extra?.(removed); }
+    },
+  });
+  extra?.(removed);
 }
 
 // ---------- Render ----------
@@ -87,6 +117,15 @@ const head = (title, sub, extra = '') => `
   </header>`;
 
 const section = (title, right = '') => `<div class="sec-head"><h2 class="sec">${title}</h2>${right}</div>`;
+
+/** A friendly empty screen: icon, what's missing, and what to do next. */
+const emptyState = (icon, title, text, action = '') => `
+  <div class="empty">
+    <span class="empty-icon" aria-hidden="true">${icon}</span>
+    <p class="empty-title">${title}</p>
+    <p class="empty-text">${text}</p>
+    ${action}
+  </div>`;
 
 // ----- Setup -----
 function setupView() {
@@ -196,11 +235,11 @@ function homeView() {
 
     ${section('Shopping', s.items.length ? `<button class="link" data-action="tab" data-tab="list">See all ${s.items.length} ${I.chev}</button>` : '')}
     ${shopping.length ? `<ul class="card rows">${shopping.map(itemRow).join('')}</ul>`
-      : `<div class="card empty-card"><p>Nothing to buy right now.</p>${quickChips(5)}</div>`}
+      : `<div class="card empty-card"><p class="empty-line">${I.cart}<span>Nothing to buy right now. Tap one to add it:</span></p>${quickChips(5)}</div>`}
 
     ${section('Today’s responsibilities', `<button class="link" data-action="task-new">${I.plus} Ask for a hand</button>`)}
     ${tasks.length ? `<ul class="card rows">${tasks.map(taskRow).join('')}</ul>`
-      : `<div class="card empty-card"><p>Nothing due today.</p><div class="chips">${TASK_IDEAS.slice(0, 3).map((x) => `<button class="chip" data-action="task-new" data-title="${esc(x)}">${I.plus}${esc(x)}</button>`).join('')}</div></div>`}
+      : `<div class="card empty-card"><p class="empty-line">${I.check}<span>Nothing due today.</span></p><div class="chips">${TASK_IDEAS.slice(0, 3).map((x) => `<button class="chip" data-action="task-new" data-title="${esc(x)}">${I.plus}${esc(x)}</button>`).join('')}</div></div>`}
 
     ${section('This week', `<button class="link" data-action="outside-new">${I.plus} Ate outside</button>`)}
     ${weekCard(spend, M.monthOutside(s, ym))}
@@ -249,7 +288,7 @@ function sortItems(items) {
 }
 
 function itemMeta(i) {
-  const parts = [M.fmtQty(i.qty, i.unit), i.note];
+  const parts = [i.note];
   if (i.status === 'claimed') parts.push(i.by === s.me ? 'You’re buying' : `${Who(i.by)} is buying`);
   else if (i.status === 'awaiting') parts.push(i.by === s.me ? 'Asked you' : `Waiting for ${who(i.by)}`);
   else parts.push(i.addedBy === s.me ? 'Added by you' : `Added by ${who(i.addedBy)}`);
@@ -266,12 +305,18 @@ function itemPill(i) {
     : `<span class="pill sage">Claimed</span>`;
 }
 
+const qtyBadge = (qty, unit) => { const q = M.fmtQty(qty, unit); return q ? `<span class="qty">${esc(unit === 'pcs' ? `${q} pcs` : q)}</span>` : ''; };
+
+// A row you can delete: a visible trash button, and on phones a swipe to the left.
+const delBtn = (action, id, name) => `<button class="icon-btn del" data-action="${action}" data-id="${id}" aria-label="Delete ${esc(name)}" title="Delete">${I.trash}</button>`;
+
 const itemRow = (i) => `
-  <li class="row">
+  <li class="row swipe" data-swipe="item-del" data-id="${i.id}">
     <button class="row-main" data-action="item" data-id="${i.id}">
-      <b>${esc(i.name)}</b><span class="meta">${esc(itemMeta(i))}</span>
+      <span class="row-title"><b>${esc(i.name)}</b>${qtyBadge(i.qty, i.unit)}</span><span class="meta">${esc(itemMeta(i))}</span>
     </button>
     ${itemPill(i)}
+    ${delBtn('item-del', i.id, i.name)}
   </li>`;
 
 function byTaskOrder(a, b) {
@@ -299,12 +344,13 @@ function taskPill(x) {
 }
 
 const taskRow = (x) => `
-  <li class="row">
+  <li class="row swipe" data-swipe="task-del" data-id="${x.id}">
     <button class="tick" data-action="task-done" data-id="${x.id}" aria-label="Mark done: ${esc(x.title)}">${I.check}</button>
     <button class="row-main" data-action="task" data-id="${x.id}">
       <b>${esc(x.title)}</b><span class="meta ${x.due < today() ? 'late' : ''}">${esc(taskMeta(x))}</span>
     </button>
     ${taskPill(x)}
+    ${delBtn('task-del', x.id, x.title)}
   </li>`;
 
 function quickChips(n = 8) {
@@ -332,7 +378,7 @@ function planView() {
         const r = m && M.recipe(s, m.rid);
         const out = M.outsideAt(s, d, planSlot);
         const outText = out.length ? `Ate outside · ${rupees(out.reduce((a, o) => a + o.amount, 0))}` : '';
-        return `<li>
+        return `<li class="day-li ${d === today() ? 'is-today' : ''}">
           <button class="day-row" data-action="${r ? 'meal' : 'pick'}" data-date="${d}" data-slot="${planSlot}">
             <span class="date-col"><small>${d === today() ? 'TODAY' : weekday(d)}</small><b>${dayNum(d)}</b></span>
             <span class="day-main">
@@ -341,6 +387,7 @@ function planView() {
                 : `<b class="day-meal blank">Choose a meal</b><span class="meta">Tap a saved favourite</span>`}
             </span>
           </button>
+          ${r ? `<button class="icon-btn del" data-action="meal-clear" data-date="${d}" data-slot="${planSlot}" aria-label="Clear ${esc(r.name)} on ${esc(dayName(d))}" title="Clear">${I.trash}</button>` : ''}
         </li>`;
       }).join('')}
     </ul>
@@ -361,15 +408,17 @@ function listView() {
     </div>
     ${listMode === 'active' ? `
       <form class="inline-add big" data-form="list-add">
-        <input name="text" placeholder="+ Add an item… e.g. milk, 2 kg rice" autocomplete="off" aria-label="Add items" list="catalog">
+        <label class="sr-only" for="list-add-text">Add items</label>
+        <input id="list-add-text" name="text" placeholder="Add items… e.g. 2 kg rice, milk, eggs" autocomplete="off" enterkeyhint="done">
         <button class="add-btn" aria-label="Add">${I.plus}</button>
       </form>
+      <div class="add-preview" id="add-preview" hidden></div>
       ${quickChips(6)}
-      ${needed.length ? `${section('To buy')}<ul class="card rows">${needed.map(itemRow).join('')}</ul>` : ''}
-      ${claimed.length ? `${section('Claimed')}<ul class="card rows">${claimed.map(itemRow).join('')}</ul>
+      ${needed.length ? `${section('To buy', `<span class="count">${needed.length}</span>`)}<ul class="card rows">${needed.map(itemRow).join('')}</ul>` : ''}
+      ${claimed.length ? `${section('Claimed', `<span class="count">${claimed.length}</span>`)}<ul class="card rows">${claimed.map(itemRow).join('')}</ul>
         <p class="note plain">Claimed items stay visible until someone marks them bought.</p>` : ''}
-      ${!s.items.length ? `<div class="empty"><p class="empty-title">Nothing to buy</p><p>Tap <b>Speak</b> and say what you need, or tap a chip above.</p></div>`
-        : `${viewOnly() ? '' : '<p class="note">Tap “I’ll buy” to take it on. Everyone can see who is buying.</p>'}
+      ${!s.items.length ? emptyState(I.cart, 'Nothing to buy', viewOnly() ? 'When your family adds items, they appear here.' : 'Type above, tap <b>Speak</b> and say a few things at once, or tap a suggestion.')
+        : `${viewOnly() ? '' : '<p class="note plain small">Tap “I’ll buy” to take it on. Tap the bin, or swipe left, to delete.</p>'}
            <button class="btn ghost wide" data-action="share-list">${I.share} Share list on WhatsApp</button>`}
     ` : boughtView()}`;
 }
@@ -394,9 +443,10 @@ function boughtView() {
           <span class="row-main static"><b>${esc(b.name)}${b.qty != null ? ` · ${esc(M.fmtQty(b.qty, b.unit))}` : ''}</b>
             <span class="meta">Bought by ${esc(who(b.by))} · ${new Date(b.at).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}${b.price ? ' · ' + rupees(b.price) : ''}</span></span>
           <button class="icon-btn quiet" data-action="restore" data-id="${b.id}" aria-label="Put ${esc(b.name)} back on the list" title="Put back on list">${I.restore}</button>
+          ${delBtn('bought-del', b.id, b.name + ' from history')}
         </li>`).join('')}
-      </ul>`).join('') + '<p class="note plain">Bought something by mistake? Tap ↩ to put it back on the list.</p>'
-    : `<div class="empty"><p class="empty-title">No purchases yet</p><p>Items marked bought appear here with who bought them and when.</p></div>`}`;
+      </ul>`).join('') + '<p class="note plain">Bought something by mistake? Tap ↩ to put it back on the list, or the bin to delete it from history.</p>'
+    : emptyState(I.history, 'No purchases yet', 'Items marked bought appear here with who bought them and when.')}`;
 }
 
 // ----- Family -----
@@ -560,8 +610,8 @@ function weekView() {
     <ul class="card rows">${w.outside.map((o) => `<li class="row">
       <span class="row-main static"><b>${esc(o.place || N.OUTSIDE_KINDS[o.kind] || 'Outside')}</b>
         <span class="meta">${dayName(o.date)} · ${EAT_SLOTS[o.slot]} · ${plural(o.people, 'person', 'people')} · ${N.OUTSIDE_WEIGHT[o.weight] || ''}</span></span>
-      <b>${rupees(o.amount)}</b>
-      <button class="icon-btn quiet" data-action="outside-remove" data-id="${o.id}" aria-label="Delete">${I.x}</button>
+      <b class="amount">${rupees(o.amount)}</b>
+      ${delBtn('outside-remove', o.id, `${rupees(o.amount)} at ${o.place || N.OUTSIDE_KINDS[o.kind] || 'outside'}`)}
     </li>`).join('')}</ul>` : ''}
     <p class="note plain">Nutrition is an estimate from recipe ingredients and typical values for Indian foods. Outside meals use rough averages. It is a guide for the family, not medical advice.</p>`;
 }
@@ -700,6 +750,27 @@ function nutritionChips(r, people) {
     <p class="hint">Per person, estimated${n.missing.length ? ` · not counted: ${esc(n.missing.join(', '))}` : ''}${n.oilAdded ? ' · includes 2 tsp cooking oil' : ''}</p>`;
 }
 
+// Nutrition for one item while adding it: a compact chip row that opens into a table.
+const nf = (v) => (v >= 100 ? num0(v) : v >= 10 ? String(Math.round(v)) : String(+v.toFixed(1)));
+function nutriChips(item, { open = false } = {}) {
+  const n = N.itemNutrition(item);
+  if (!n) return `<p class="nutri none">${I.leaf} No nutrition data${M.catOf(item.name) === 'Other' || ['Household', 'Personal care'].includes(M.catOf(item.name)) ? ' (not a food we know)' : ''}</p>`;
+  const show = n.amount || n.per100;
+  const basis = n.amount ? `for ${M.fmtQty(item.qty, item.unit)}${item.unit === 'pcs' || !item.unit ? ' pcs' : ''}` : 'per 100 g';
+  const chip = (k, unit, label) => `<span class="nchip ${k}"><b>${nf(show[k])}${unit}</b> ${label}</span>`;
+  return `<details class="nutri" ${open ? 'open' : ''}>
+    <summary aria-label="Nutrition ${basis}: ${nf(show.kcal)} kilocalories, ${nf(show.protein)} grams protein, ${nf(show.carbs)} grams carbs, ${nf(show.fat)} grams fat, ${nf(show.fibre)} grams fibre. Show details">
+      ${chip('kcal', '', 'kcal')}${chip('protein', ' g', 'protein')}${chip('carbs', ' g', 'carbs')}${chip('fat', ' g', 'fat')}${chip('fibre', ' g', 'fibre')}
+      <span class="nbasis">${esc(basis)}</span>
+    </summary>
+    <table class="ntable">
+      <thead><tr><th scope="col"><span class="sr-only">Nutrient</span></th><th scope="col">Per 100 g</th>${n.amount ? `<th scope="col">${esc(basis.replace('for ', 'For '))}</th>` : ''}</tr></thead>
+      <tbody>${N.NUTRIENTS.map((x) => `<tr><th scope="row">${x.label}</th><td>${nf(n.per100[x.k])} ${x.unit}</td>${n.amount ? `<td>${nf(n.amount[x.k])} ${x.unit}</td>` : ''}</tr>`).join('')}</tbody>
+    </table>
+    <p class="hint">${n.amount ? `About ${num0(n.grams)} g edible. ` : 'Add a quantity to see totals. '}Values from the Indian Food Composition Tables (IFCT 2017). Estimates only.</p>
+  </details>`;
+}
+
 // ----- Item detail -----
 function itemSheet(id) {
   const i = s.items.find((x) => x.id === id);
@@ -735,6 +806,7 @@ function itemSheet(id) {
   openSheet(`
     <h2 class="sheet-title big">${esc(i.name)}${i.qty != null ? ` · ${esc(M.fmtQty(i.qty, i.unit))}` : ''}</h2>
     <p class="sub">Added by ${esc(who(i.addedBy))} · ${timeAgo(i.addedAt)}${i.meal ? ` · for ${esc(i.meal)}` : ''}</p>
+    ${nutriChips(i)}
     ${status}
     ${buyForm}
     <details class="more">
@@ -746,9 +818,10 @@ function itemSheet(id) {
           <label class="field">Unit<select name="unit">${['', 'kg', 'g', 'L', 'ml', 'pcs', 'pkt', 'dozen', 'bottle'].map((u) => `<option value="${u}" ${u === (i.unit || '') ? 'selected' : ''}>${u || '—'}</option>`).join('')}</select></label>
         </div>
         <label class="field">Brand or note<input name="note" value="${esc(i.note)}" placeholder="Any brand is fine" maxlength="40"></label>
-        <div class="btn-row"><button type="button" class="btn ghost danger" data-action="item-remove" data-id="${id}">Remove</button><button class="btn sage">Save</button></div>
+        <button class="btn sage wide">Save changes</button>
       </form>
-    </details>`, {
+    </details>
+    <button type="button" class="btn ghost wide danger" data-action="item-remove" data-id="${id}">${I.trash} Delete from list</button>`, {
     onMount: (sh) => {
       const q = sh.querySelector('[data-form="buy"] [name="qty"]');
       const btn = sh.querySelector('#buy-btn');
@@ -796,7 +869,7 @@ function taskSheet(id, preset = {}) {
       <div class="chips">${Object.entries(REPEAT).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="repeat" value="${k}" ${t.repeat === k ? 'checked' : ''}>${v}</label>`).join('')}</div>
       <button class="btn ${x ? 'sage' : 'coral'} wide">${x ? 'Save changes' : 'Send request'}</button>
     </form>
-    ${x ? `<button class="btn ghost wide danger" data-action="task-remove" data-id="${x.id}">Delete</button>` : ''}`, { tall: true });
+    ${x ? `<button class="btn ghost wide danger" data-action="task-remove" data-id="${x.id}">${I.trash} Delete task</button>` : ''}`, { tall: true });
 }
 
 // ----- Recipe editor -----
@@ -820,7 +893,8 @@ function recipeSheet(id, preset = {}) {
         <textarea name="ing" rows="6" placeholder="Rice 500 g&#10;Toor dal 200 g&#10;Tomato 2 pcs">${esc(r.ing.map((x) => [x.name, x.qty, x.unit].filter((v) => v != null && v !== '').join(' ')).join('\n'))}</textarea></label>
       <button class="btn coral wide">${id ? 'Save recipe' : preset.date ? 'Save and plan it' : 'Save recipe'}</button>
     </form>
-    ${id ? `<button class="btn ghost wide" data-action="fav" data-id="${id}" data-close="1">${s.favs.includes(id) ? 'Remove from favourites' : 'Add to favourites'}</button>` : ''}`, { tall: true });
+    ${id ? `<button class="btn ghost wide" data-action="fav" data-id="${id}" data-close="1">${s.favs.includes(id) ? 'Remove from favourites' : 'Add to favourites'}</button>` : ''}
+    ${id && !M.isBuiltIn(id) ? `<button class="btn ghost wide danger" data-action="recipe-del" data-id="${id}">${I.trash} Delete this recipe</button>` : ''}`, { tall: true });
 }
 
 // ----- Bills -----
@@ -830,8 +904,8 @@ function billsSheet() {
     <h2 class="sheet-title big">Bills</h2>
     ${bills.length ? `<ul class="rows">${bills.map((b) => `<li class="row">
       <span class="row-main static"><b>${esc(b.shop || 'Bill')}</b><span class="meta">${dayName(b.date)}${b.count ? ' · ' + plural(b.count, 'item') : ''} · ${esc(who(b.by))}</span></span>
-      <b>${rupees(b.total)}</b>
-      <button class="icon-btn quiet" data-action="bill-remove" data-id="${b.id}" aria-label="Delete bill">${I.x}</button></li>`).join('')}</ul>`
+      <b class="amount">${rupees(b.total)}</b>
+      ${delBtn('bill-remove', b.id, `${rupees(b.total)} bill${b.shop ? ' from ' + b.shop : ''}`)}</li>`).join('')}</ul>`
       : '<p class="note">No bills yet. Scan one, or add the total below.</p>'}
     <form data-form="bill" class="two add-bill">
       <input name="shop" placeholder="Shop (optional)" maxlength="40" aria-label="Shop">
@@ -908,53 +982,178 @@ function settingsSheet() {
         </div>
       </div>
       <div class="field">Voice language<div class="chips">${Object.entries(LANGS).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="lang" value="${k}" ${s.lang === k ? 'checked' : ''}>${v}</label>`).join('')}</div></div>
+      <div class="field">Appearance<div class="chips">${Object.entries(THEMES).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="theme" value="${k}" ${pref('theme', 'system') === k ? 'checked' : ''}>${v}</label>`).join('')}</div></div>
       <button class="btn coral wide">Save</button>
     </form>`);
 }
 
-// ---------- Speak ----------
+// ---------- Speak, then check before adding ----------
 let stopListening = null;
-function speakSheet() {
+let ignoreEnd = false;   // stopped to change language: don't open the review
+let draft = [];          // items waiting in the review sheet: { k, name, qty, unit }
+let draftCarry = false;  // "Say more" from the review sheet adds to the same draft
+const UNITS = ['', 'kg', 'g', 'L', 'ml', 'pcs', 'pkt', 'dozen', 'bottle'];
+const EXAMPLES = ['“2 kg rice, 1 litre milk and 6 eggs”', '“do kilo chawal aur ek litre doodh”', '“randu kilo ari, oru litre paal”'];
+
+function speakSheet(more = false) {
+  draftCarry = more;
   openSheet(`
-    <h2 class="sheet-title big center">What do we need?</h2>
+    <h2 class="sheet-title big center">${more ? 'Say more items' : 'What do we need?'}</h2>
     ${canListen ? `
-      <button class="mic" id="mic" aria-label="Start listening">${I.mic}</button>
-      <p class="heard" id="heard" aria-live="polite">Say it like you’d say it at home.</p>
-      <p class="note plain center">“Two litres of milk, one kilo rice and six eggs.”</p>
-      <div class="chips center">${Object.entries(LANGS).map(([k, v]) => `<button class="chip ${s.lang === k ? 'on' : ''}" data-action="lang" data-lang="${k}">${v}</button>`).join('')}</div>`
-    : `<p class="note">Voice isn’t available in this browser. Type below, or use your keyboard’s mic.</p>`}
+      <div class="mic-wrap">
+        <button class="mic" id="mic" aria-pressed="false" aria-label="Start listening">${I.mic}</button>
+        <p class="mic-state" id="mic-state" aria-live="polite">Tap the mic and speak</p>
+      </div>
+      <p class="heard" id="heard">Say several things at once, the way you would at home.</p>
+      <div class="chips center heard-items" id="heard-items" aria-label="Items heard so far"></div>
+      <ul class="examples">${EXAMPLES.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      <div class="chips center" role="group" aria-label="Voice language">${Object.entries(LANGS).map(([k, v]) => `<button class="chip ${s.lang === k ? 'on' : ''}" data-action="lang" data-lang="${k}" aria-pressed="${s.lang === k}">${v}</button>`).join('')}</div>`
+    : `<p class="note">Voice isn’t available in this browser. Type below, or use your keyboard’s mic. You can type several items at once.</p>`}
     <form class="inline-add" data-form="speak-type">
-      <input name="text" placeholder="Or type: milk, 2 kg rice, eggs" autocomplete="off" aria-label="Type items" ${canListen ? '' : 'autofocus'}>
-      <button class="add-btn" aria-label="Add">${I.plus}</button>
+      <label class="sr-only" for="speak-text">Type items</label>
+      <input id="speak-text" name="text" placeholder="Or type: milk, 2 kg rice, eggs" autocomplete="off" enterkeyhint="go" ${canListen ? '' : 'autofocus'}>
+      <button class="add-btn" aria-label="Check these items">${I.chev}</button>
     </form>`, {
     onMount: () => { if (canListen) startListening(); },
-    onClose: () => { stopListening?.(); stopListening = null; },
+    onClose: () => { ignoreEnd = true; stopListening?.(); stopListening = null; },
   });
 }
 
-function startListening() {
-  const mic = $('#mic'), heard = $('#heard');
+function micState(on, text) {
+  const mic = $('#mic'), st = $('#mic-state');
   if (!mic) return;
-  if (stopListening) { stopListening(); return; }
-  mic.classList.add('on'); mic.innerHTML = I.stop; mic.setAttribute('aria-label', 'Stop listening');
-  heard.textContent = 'Listening…';
+  mic.classList.toggle('on', on);
+  mic.innerHTML = on ? I.stop : I.mic;
+  mic.setAttribute('aria-pressed', String(on));
+  mic.setAttribute('aria-label', on ? 'Stop listening' : 'Start listening');
+  st.textContent = text || (on ? 'Listening… tap to stop' : 'Tap the mic and speak');
+  st.classList.toggle('live', on);
+}
+
+function startListening() {
+  const heard = $('#heard'), chips = $('#heard-items');
+  if (!$('#mic')) return;
+  if (stopListening) { stopListening(); return; } // second tap: stop and review
+  ignoreEnd = false;
+  micState(true);
+  heard.textContent = '…';
+  chips.innerHTML = '';
   stopListening = listen(s.lang, {
-    onText: (text) => { heard.textContent = text || 'Listening…'; },
+    onText: (text) => {
+      if (!$('#heard')) return;
+      heard.textContent = text || '…';
+      // Show what Homzy understood so far, while they keep talking.
+      chips.innerHTML = parseSpeech(text).map((x) => `<span class="chip sm">${esc(x.name)}${x.qty != null ? ` · ${esc(M.fmtQty(x.qty, x.unit))}` : ''}</span>`).join('');
+    },
     onEnd: (text, error) => {
       stopListening = null;
-      if (!$('#mic')) return;
-      mic.classList.remove('on'); mic.innerHTML = I.mic; mic.setAttribute('aria-label', 'Start listening');
-      if (text) return addTyped(text, true);
+      if (ignoreEnd || !$('#mic')) { ignoreEnd = false; micState(false); return; }
+      micState(false);
+      if (text) return reviewItems(text);
       heard.textContent = speechError(error || 'no-speech');
     },
   });
 }
 
-/** Add free text ("milk, 2 kg rice") to the list, warning about duplicates. */
-function addTyped(text, fromSheet) {
+/** Turn spoken or typed text into items and show them for a quick check. */
+function reviewItems(text) {
   const parsed = parseSpeech(text);
-  if (!parsed.length) { const h = $('#heard'); if (h) h.textContent = 'Couldn’t catch any items. Try again?'; return; }
-  if (fromSheet) closeSheet();
+  if (!parsed.length) {
+    const h = $('#heard');
+    if (h) h.textContent = 'Couldn’t catch any items. Try again?'; else toast('Couldn’t find any items in that.');
+    return;
+  }
+  const found = parsed.map((x) => ({ k: M.uid(), name: x.name, qty: x.qty, unit: x.unit }));
+  draft = draftCarry ? [...draft, ...found] : found;
+  draftCarry = false;
+  draftSheet();
+}
+
+function draftSheet() {
+  openSheet(`
+    <h2 class="sheet-title big">Check before adding</h2>
+    <p class="sub" id="draft-sub"></p>
+    <ul class="draft" id="draft-list"></ul>
+    <div class="draft-tools">
+      <button type="button" class="link" data-action="draft-new">${I.plus} Add another</button>
+      ${canListen ? `<button type="button" class="link" data-action="draft-speak">${I.mic} Say more</button>` : ''}
+    </div>
+    <button type="button" class="btn coral wide" data-action="draft-add" id="draft-add"></button>`, {
+    tall: true,
+    onMount: (sh) => {
+      drawDraft();
+      sh.addEventListener('input', onDraftInput);
+      sh.addEventListener('change', onDraftInput);
+      sh.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('.draft input')) { e.preventDefault(); $('#draft-add')?.click(); } });
+    },
+  });
+}
+
+function draftRow(x) {
+  const dupe = x.name.trim() && M.activeItem(s, x.name);
+  return `<li class="draft-row" data-k="${x.k}">
+    <div class="draft-line">
+      <label class="sr-only" for="dn-${x.k}">Item name</label>
+      <input class="dn" id="dn-${x.k}" data-f="name" value="${esc(x.name)}" maxlength="40" autocomplete="off" placeholder="Item name">
+      <button type="button" class="icon-btn del" data-action="draft-del" data-k="${x.k}" aria-label="Don’t add ${esc(x.name || 'this item')}">${I.trash}</button>
+    </div>
+    <div class="draft-line">
+      <label class="draft-qty"><span class="sr-only">Quantity</span><input data-f="qty" inputmode="decimal" value="${x.qty ?? ''}" placeholder="Qty" autocomplete="off"></label>
+      <label class="draft-unit"><span class="sr-only">Unit</span><select data-f="unit">${UNITS.map((u) => `<option value="${u}" ${u === (x.unit || '') ? 'selected' : ''}>${u || 'Unit'}</option>`).join('')}</select></label>
+      ${dupe ? '<span class="tag warn">On the list</span>' : ''}
+    </div>
+    <div data-nutri>${x.name.trim() ? nutriChips(x) : ''}</div>
+  </li>`;
+}
+
+function drawDraft() {
+  const list = $('#draft-list');
+  if (!list) return;
+  list.innerHTML = draft.length ? draft.map(draftRow).join('') : '<li class="empty-text">Nothing left to add. Add another, or close this.</li>';
+  updateDraftButton();
+}
+
+function updateDraftButton() {
+  const ready = draft.filter((x) => x.name.trim());
+  const b = $('#draft-add');
+  if (b) {
+    b.disabled = !ready.length;
+    b.textContent = !ready.length ? 'Nothing to add' : ready.length === 1 ? `Add ${ready[0].name.trim()}` : `Add all ${ready.length}`;
+  }
+  const sub = $('#draft-sub');
+  if (sub) sub.textContent = ready.length ? `${plural(ready.length, 'item')} found. Fix or remove any before adding.` : '';
+}
+
+function onDraftInput(e) {
+  const row = e.target.closest('.draft-row');
+  const f = e.target.dataset.f;
+  const x = row && f && draft.find((d) => d.k === row.dataset.k);
+  if (!x) return;
+  if (f === 'name') x.name = e.target.value;
+  if (f === 'qty') { const q = num(e.target.value); x.qty = q > 0 ? q : null; }
+  if (f === 'unit') x.unit = e.target.value || null;
+  // Redraw only the nutrition, so the cursor stays where it is.
+  const open = row.querySelector('details.nutri')?.open;
+  row.querySelector('[data-nutri]').innerHTML = x.name.trim() ? nutriChips(x, { open }) : '';
+  updateDraftButton();
+}
+
+function addDraft() {
+  const items = draft.filter((x) => x.name.trim()).map(({ name, qty, unit }) => ({ name: name.trim(), qty, unit }));
+  if (!items.length) return;
+  closeSheet();
+  draft = [];
+  addParsed(items);
+}
+
+/** Add free text ("milk, 2 kg rice") straight to the list. */
+function addTyped(text) {
+  addParsed(parseSpeech(text));
+}
+
+/** Add items to the list, warning about duplicates. */
+function addParsed(parsed) {
+  if (!parsed.length) return;
   let res;
   commit((r) => r.added.length ? `Added ${r.added.map((i) => i.name + (i.qty != null ? ' ' + M.fmtQty(i.qty, i.unit) : '')).join(', ')}` : null,
     () => (res = M.addItems(s, parsed)));
@@ -965,6 +1164,23 @@ function addTyped(text, fromSheet) {
   }
   if (tab !== 'list' && tab !== 'home') { tab = 'list'; listMode = 'active'; render(); }
 }
+
+// Typing in "Add items": show what will be added, with nutrition, before pressing Add.
+let previewTimer = null;
+function showAddPreview(text) {
+  const box = $('#add-preview');
+  if (!box) return;
+  const items = text.trim() ? parseSpeech(text) : [];
+  box.hidden = !items.length;
+  box.innerHTML = items.length ? `
+    <p class="preview-head">${items.length > 1 ? `${items.length} items · you can check them before adding` : 'Will add'}</p>
+    <ul class="preview-list">${items.map((x) => `<li><span class="row-title"><b>${esc(x.name)}</b>${qtyBadge(x.qty, x.unit)}</span>${nutriChips(x)}</li>`).join('')}</ul>` : '';
+}
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'list-add-text') return;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => showAddPreview(e.target.value), 180);
+});
 
 // ---------- Scan ----------
 const photo = $('#photo');
@@ -1009,10 +1225,11 @@ function reviewSheet({ items, total, shop }) {
         <label class="field">Shop<input name="shop" value="${esc(shop)}" placeholder="Shop name" maxlength="40"></label>
         <label class="field">Total ₹<input name="total" inputmode="decimal" value="${total ?? ''}" placeholder="0"></label>
       </div>
-      ${review.length ? `<ul class="rows">${review.map((x) => `<li><label class="row check-row">
+      ${review.length ? `<ul class="rows bill-lines">${review.map((x) => `<li><label class="row check-row">
         <input type="checkbox" data-review="${x.id}" ${x.on ? 'checked' : ''}>
         <span class="row-main static"><b>${esc(x.name)}</b>${x.listed ? '<span class="meta on-list">On your list</span>' : ''}</span>
-        <span class="muted">${x.price != null ? rupees(x.price) : ''}</span></label></li>`).join('')}</ul>`
+        <span class="amount">${x.price != null ? rupees(x.price) : ''}</span></label>
+        ${x.known ? nutriChips({ name: x.name }) : ''}</li>`).join('')}</ul>`
       : '<p class="note">No items could be read clearly. You can still save the total.</p>'}
       <button class="btn coral wide">${listed ? 'Mark bought & save bill' : 'Save bill'}</button>
     </form>`, { tall: true });
@@ -1091,7 +1308,7 @@ view.addEventListener('focusout', () => setTimeout(() => { if (renderLater && !t
 // Undo would bring back the other phone's old data, so drop it once their change arrives.
 function dropUndo() {
   const el = $('#toast');
-  if (el?._fn) { el.hidden = true; el._fn = null; }
+  if (el?._fn && !el._safe) hideToast();
 }
 
 function syncLine() {
@@ -1505,10 +1722,25 @@ const ACTIONS = {
     if (el.dataset.close) closeSheet();
   },
   lang: (el) => {
-    s.lang = el.dataset.lang; M.save(s);
-    $$('[data-action="lang"]').forEach((b) => b.classList.toggle('on', b === el));
-    stopListening?.(); setTimeout(startListening, 300);
+    s.lang = el.dataset.lang; M.save(s, { quiet: true });
+    $$('[data-action="lang"]').forEach((b) => { b.classList.toggle('on', b === el); b.setAttribute('aria-pressed', String(b === el)); });
+    if (stopListening) { ignoreEnd = true; stopListening(); }
+    micState(false, `${LANGS[s.lang]} · tap the mic and speak`);
   },
+  'draft-del': (el) => {
+    const i = draft.findIndex((x) => x.k === el.dataset.k);
+    if (i < 0) return;
+    draft.splice(i, 1);
+    drawDraft();
+    ($$('.draft .dn')[Math.min(i, draft.length - 1)] || $('#draft-add'))?.focus();
+  },
+  'draft-new': () => {
+    draft.push({ k: M.uid(), name: '', qty: null, unit: null });
+    drawDraft();
+    $$('.draft .dn').pop()?.focus();
+  },
+  'draft-speak': () => speakSheet(true),
+  'draft-add': () => addDraft(),
 
   // setup
   step: (el) => {
@@ -1550,8 +1782,9 @@ const ACTIONS = {
   'clear-meal': () => {
     const { date, slot } = $('#pick-list').dataset;
     closeSheet();
-    commit('Meal cleared. Shopping already added stays on the list.', () => M.setMeal(s, date, slot, null));
+    removeWithUndo('meal', { date, slot });
   },
+  'meal-clear': (el) => removeWithUndo('meal', { date: el.dataset.date, slot: el.dataset.slot }),
   'meal-people': (el) => {
     const m = M.mealAt(s, checkCtx.date, checkCtx.slot);
     M.setPeople(s, checkCtx.date, checkCtx.slot, m.people + +el.dataset.d);
@@ -1588,7 +1821,9 @@ const ACTIONS = {
   'item-accept': (el) => { const i = byId(s.items, el.dataset.id); commit(`You’re buying ${i.name}`, () => M.acceptItem(s, i.id)); after(el, () => itemSheet(i.id)); },
   'item-decline': (el) => { const i = byId(s.items, el.dataset.id); commit(`${i.name} is open for anyone`, () => M.declineItem(s, i.id)); after(el, () => itemSheet(i.id)); },
   'quick-buy': (el) => { const i = byId(s.items, el.dataset.id); commit(`${i.name} marked bought`, () => M.buy(s, i.id)); },
-  'item-remove': (el) => { const i = byId(s.items, el.dataset.id); closeSheet(); commit(`Removed ${i.name}`, () => M.removeItem(s, i.id)); },
+  'item-remove': (el) => { closeSheet(); removeWithUndo('item', el.dataset.id); },
+  'item-del': (el) => removeWithUndo('item', el.dataset.id),
+  'bought-del': (el) => removeWithUndo('bought', el.dataset.id),
   restore: (el) => { const b = byId(s.bought, el.dataset.id); commit(`${b.name} is back on the list`, () => M.restore(s, b.id)); },
   'share-list': () => {
     const text = `🛒 ${s.home.name} – shopping list\n` + sortItems(s.items).map((i) => `• ${i.name}${i.qty != null ? ' – ' + M.fmtQty(i.qty, i.unit) : ''}${i.status === 'claimed' ? ` (${M.firstName(s, i.by)} is buying)` : ''}`).join('\n');
@@ -1605,7 +1840,8 @@ const ACTIONS = {
   'task-decline': (el) => { const t = byId(s.tasks, el.dataset.id); commit('Okay. It’s open for anyone now.', () => M.declineTask(s, t.id)); after(el); },
   'task-release': (el) => { const t = byId(s.tasks, el.dataset.id); commit('Released for anyone', () => M.releaseTask(s, t.id)); after(el); },
   'task-done': (el) => { const t = byId(s.tasks, el.dataset.id); commit(`Done: ${t.title}`, () => M.finishTask(s, t.id)); after(el); },
-  'task-remove': (el) => { const t = byId(s.tasks, el.dataset.id); closeSheet(); commit('Task deleted', () => M.removeTask(s, t.id)); },
+  'task-remove': (el) => { closeSheet(); removeWithUndo('task', el.dataset.id); },
+  'task-del': (el) => removeWithUndo('task', el.dataset.id),
 
   // family & recipes
   'member-remove': (el) => {
@@ -1615,6 +1851,7 @@ const ACTIONS = {
     commit(`Removed ${m.name}. Their claims are open again.`, () => M.removeMember(s, m.id));
   },
   recipe: (el) => recipeSheet(el.dataset.id),
+  'recipe-del': (el) => { closeSheet(); removeWithUndo('recipe', el.dataset.id); },
   'recipe-new': () => recipeSheet(null),
   fav: (el) => { const r = M.recipe(s, el.dataset.id); commit(s.favs.includes(r.id) ? `Removed ${r.name} from favourites` : `Saved ${r.name}`, () => M.toggleFav(s, r.id)); after(el); },
   settings: () => settingsSheet(),
@@ -1624,10 +1861,10 @@ const ACTIONS = {
   'week-prev': () => { weekOffset--; render(); },
   'week-next': () => { weekOffset = Math.min(0, weekOffset + 1); render(); },
   'outside-new': () => outsideSheet(),
-  'outside-remove': (el) => { const o = byId(s.outside, el.dataset.id); commit(`Deleted ${rupees(o.amount)} outside`, () => M.removeOutside(s, o.id)); },
+  'outside-remove': (el) => removeWithUndo('outside', el.dataset.id),
   feedback: (el) => feedbackSheet(+el.dataset.rating || 0),
   'fb-snooze': () => { setPref('fb-snooze', String(Date.now() + 14 * 864e5)); render(); },
-  'bill-remove': (el) => { const b = byId(s.bills, el.dataset.id); closeSheet(); commit(`Deleted ${rupees(b.total)} bill`, () => { s.bills = s.bills.filter((x) => x !== b); }); },
+  'bill-remove': (el) => removeWithUndo('bill', el.dataset.id, () => { if (!$('#sheet-root').hidden) billsSheet(); }),
   backup: () => {
     const blob = new Blob([JSON.stringify(s, null, 1)], { type: 'application/json' });
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `homzy-backup-${today()}.json` });
@@ -1644,6 +1881,48 @@ const ACTIONS = {
   ...SYNC_ACTIONS,
   'reset-yes': () => { closeSheet(); s = M.fresh(); setupStep = 1; setupDraft = { home: 'Our home', name: '', people: 4, dinners: SETUP_DINNERS.slice(0, 3), others: [] }; persist(); },
 };
+
+// ---------- Swipe left to delete (touch only; the bin button does the same) ----------
+let swipe = null;
+let suppressClick = false;
+document.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse' || viewOnly()) return;
+  const row = e.target.closest('.row.swipe');
+  if (!row || e.target.closest('input, select, textarea')) return;
+  swipe = { row, x: e.clientX, y: e.clientY, dx: 0, active: false, id: e.pointerId };
+});
+document.addEventListener('pointermove', (e) => {
+  if (!swipe || e.pointerId !== swipe.id) return;
+  const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
+  if (!swipe.active) {
+    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { swipe = null; return; } // scrolling
+    if (dx > -14 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    swipe.active = true;
+    swipe.row.classList.add('swiping');
+  }
+  swipe.dx = Math.min(0, dx);
+  swipe.row.style.transform = `translateX(${swipe.dx}px)`;
+  swipe.row.classList.toggle('will-delete', swipe.dx < -swipe.row.offsetWidth * 0.35);
+});
+function endSwipe(e) {
+  if (!swipe) return;
+  const { row, dx, active } = swipe;
+  swipe = null;
+  if (!active) return;
+  row.classList.remove('swiping');
+  suppressClick = true;
+  setTimeout(() => { suppressClick = false; }, 350);
+  if (e.type === 'pointerup' && dx < -row.offsetWidth * 0.35) {
+    row.classList.add('swiped');
+    setTimeout(() => ACTIONS[row.dataset.swipe]?.(row), 160);
+  } else {
+    row.style.transform = '';
+    row.classList.remove('will-delete');
+  }
+}
+document.addEventListener('pointerup', endSwipe);
+document.addEventListener('pointercancel', endSwipe);
+document.addEventListener('click', (e) => { if (suppressClick) { e.preventDefault(); e.stopPropagation(); } }, true);
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('#mic')) return viewOnly() ? viewOnlyToast() : startListening();
@@ -1680,8 +1959,15 @@ const FORMS = {
     commit(`Added ${n}`, () => M.addMember(s, n));
     if ($('.sheet')) switchSheet();
   },
-  'list-add': (f, d) => { if (d.text.trim()) addTyped(d.text); setTimeout(() => $('[data-form="list-add"] input')?.focus(), 30); },
-  'speak-type': (f, d) => { if (d.text.trim()) addTyped(d.text, true); },
+  'list-add': (f, d) => {
+    if (!d.text.trim()) return;
+    const parsed = parseSpeech(d.text);
+    // Several items in one go: check them first. One item: add it straight away.
+    if (parsed.length > 1) { f.text.value = ''; showAddPreview(''); return reviewItems(d.text); }
+    addParsed(parsed);
+    setTimeout(() => $('[data-form="list-add"] input')?.focus(), 30);
+  },
+  'speak-type': (f, d) => { if (d.text.trim()) reviewItems(d.text); },
   buy: (f, d) => {
     const i = byId(s.items, f.dataset.id);
     if (!i) return;
@@ -1758,6 +2044,8 @@ const FORMS = {
   ...SYNC_FORMS,
   settings: (f, d) => {
     closeSheet();
+    setPref('theme', d.theme || 'system');
+    applyTheme();
     if (viewOnly()) { s.lang = d.lang || s.lang; M.save(s, { quiet: true }); return toast('Voice language saved'); }
     commit('Settings saved', () => {
       s.home.name = d.home.trim() || 'Our home';
@@ -1798,7 +2086,6 @@ const readDay = (e) => {
 };
 document.addEventListener('pointerover', readDay);
 document.addEventListener('focusin', readDay);
-$('#catalog').innerHTML = CATALOG.map((c) => `<option value="${esc(c.name)}">`).join('');
 
 // ---------- Install & offline ----------
 let installEvent = null;
@@ -1814,6 +2101,7 @@ window.addEventListener('appinstalled', () => { document.body.classList.remove('
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { render(); flushOutbox(); } });
 
+applyTheme();
 if (!pref('first-seen', '')) setPref('first-seen', String(Date.now()));
 render();
 flushOutbox();

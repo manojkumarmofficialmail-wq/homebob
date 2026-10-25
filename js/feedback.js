@@ -1,6 +1,6 @@
 // Sends feedback to /api/feedback. Messages wait on the phone when offline
 // and go out the next time Homzy is open with internet.
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 
 const OUTBOX = 'homzy:feedback-outbox';
 const INSTALL = 'homzy:install-id';

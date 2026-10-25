@@ -117,7 +117,9 @@ export function parseItem(phrase) {
   }));
 }
 
-// Pull every catalog item out of a run of words, keeping leftovers as their own item.
+// Pull every catalog item out of a run of words. Words left between matches become
+// their own items ("rice chewing gum milk" → Rice, Chewing gum, Milk).
+const GAP = '\u0001';
 function splitNames(text) {
   let left = ` ${text} `;
   const found = [];
@@ -126,13 +128,29 @@ function splitNames(text) {
     const m = left.match(aliasRegex(alias));
     if (!m) continue;
     // Extend Indic matches to the end of the word ("അരിയ" from "അരിയും").
+    const start = m.index + m[1].length;
     const endIdx = left.indexOf(' ', m.index + m[0].length);
-    found.push({ hit: item, at: m.index });
-    left = left.slice(0, m.index) + ' '.repeat(endIdx - m.index) + left.slice(endIdx);
+    found.push({ hit: item, at: start });
+    left = left.slice(0, start) + GAP.repeat(endIdx - start) + left.slice(endIdx);
   }
-  const extra = left.trim().replace(/\s+/g, ' ');
-  if (extra && (!found.length || extra.length > 2)) found.push({ hit: null, text: extra, at: left.indexOf(extra.split(' ')[0]) });
+  // Each run of leftover words between matches is one unknown item.
+  const runRe = new RegExp(`[^${GAP}]+`, 'g');
+  for (const m of left.matchAll(runRe)) {
+    const words = m[0].trim().replace(/\s+/g, ' ');
+    if (!words || (found.some((f) => f.hit) && words.length <= 2)) continue;
+    found.push({ hit: null, text: words, at: m.index + m[0].indexOf(words[0]) });
+  }
   return found.sort((a, b) => a.at - b.at);
+}
+
+// Romanised Malayalam "ariyum paalum" ("rice and milk"): drop the "-um" when what is
+// left is a known word, so "-um" works as "and" the way "ും" does in Malayalam script.
+const ASCII_ALIASES = new Set(INDEX.map((x) => x.alias).filter((a) => isAscii(a) && !a.includes(' ')));
+function splitRomanUm(tok) {
+  if (!/^[a-z]{4,}um$/.test(tok) || ASCII_ALIASES.has(tok)) return null;
+  const stem = tok.slice(0, -2);
+  for (const s of [stem, stem.replace(/[yv]$/, '')]) if (s.length >= 2 && ASCII_ALIASES.has(s)) return s;
+  return null;
 }
 
 // "2 milk" → 2 L feels wrong for eggs, so only borrow the catalog unit for counted things.
@@ -151,23 +169,36 @@ export function parseSpeech(text) {
       return n == null ? m : ` ${n + 0.5} `;
     })
     .replace(/ും(?=\s|[,.]|$)/g, ' , ')            // Malayalam "-um" means "and"
-    .replace(/\s(and|aur|और|then|plus|also)\s/gi, ' , ')
-    .replace(/[;\n]/g, ',');
+    .replace(/[&+]/g, ' , ')
+    .replace(/[;\n|]/g, ',');
+  // Joining words, repeated so "milk and and eggs" or back-to-back joiners all split.
+  const JOIN = /(^|[\s,])(and|aur|और|then|plus|also|um|ഉം|pinne|പിന്നെ|phir|fir|फिर)(?=[\s,]|$)/gi;
+  s = s.replace(JOIN, '$1 , ').replace(JOIN, '$1 , ');
 
-  const chunks = [];
+  const chunks = []; // { text, word, num }
+  const push = (toks, hasWord, hasNum) => {
+    if (!toks.length) return;
+    const prev = chunks[chunks.length - 1];
+    // "rice 2 kg", "eggs 6": a bare amount right after a name belongs to that name.
+    if (!hasWord && prev && prev.word && !prev.num) { prev.text += ' ' + toks.join(' '); prev.num = hasNum; return; }
+    chunks.push({ text: toks.join(' '), word: hasWord, num: hasNum });
+  };
   for (const part of s.split(/[,.](?!\d)/)) {
     // Also split "two litres milk one kilo rice" at each new number.
-    const toks = norm(part).split(' ').filter(Boolean);
-    let cur = [], hasWord = false;
+    const toks = norm(part).split(' ').filter(Boolean)
+      .flatMap((tok) => { const stem = splitRomanUm(tok); return stem ? [stem, GAP] : [tok]; });
+    let cur = [], hasWord = false, hasNum = false;
     for (const tok of toks) {
+      if (tok === GAP) { push(cur, hasWord, hasNum); cur = []; hasWord = hasNum = false; continue; }
       const isNum = toNumber(tok) != null && !isArticle(tok);
-      if (isNum && hasWord) { chunks.push(cur.join(' ')); cur = []; hasWord = false; }
+      if (isNum && hasWord) { push(cur, hasWord, hasNum); cur = []; hasWord = hasNum = false; }
       cur.push(tok);
-      if (!isNum && !UNIT[tok] && !FILL.has(tok)) hasWord = true;
+      if (isNum) hasNum = true;
+      else if (!UNIT[tok] && !FILL.has(tok)) hasWord = true;
     }
-    if (cur.length) chunks.push(cur.join(' '));
+    push(cur, hasWord, hasNum);
   }
-  return chunks.flatMap(parseItem);
+  return chunks.flatMap((c) => parseItem(c.text));
 }
 
 // ---------- Bills ----------

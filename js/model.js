@@ -365,10 +365,63 @@ export function updateItem(s, id, fields) {
   if (fields.name) i.cat = catOf(i.name);
 }
 export function removeItem(s, id) {
-  const i = item(s, id);
-  s.items = s.items.filter((x) => x.id !== id);
-  if (i) log(s, `removed ${i.name}`);
+  return removeFrom(s, 'item', id);
 }
+
+// ---------- Deleting anything, with Undo ----------
+// Family sync needs no tombstones: each phone keeps the last copy it agreed with the
+// server, so merge3() sees "was there, now gone" as a delete and keeps it deleted,
+// even when another phone edited the same thing meanwhile (see tests/sync.test.js).
+const LISTS = { item: 'items', task: 'tasks', outside: 'outside', bill: 'bills', recipe: 'recipes', bought: 'bought' };
+const LABEL = {
+  item: (x) => x.name, task: (x) => x.title, outside: (x) => `₹${Math.round(x.amount)} outside`,
+  bill: (x) => `₹${Math.round(x.total)} bill`, recipe: (x) => x.name, bought: (x) => x.name,
+};
+
+/** Delete one thing by id. Returns what's needed to put it back, or null. */
+export function removeFrom(s, kind, id) {
+  const list = s[LISTS[kind]];
+  const index = list ? list.findIndex((x) => x.id === id) : -1;
+  if (index < 0) return null;
+  const [value] = list.splice(index, 1);
+  const removed = { kind, index, value, label: LABEL[kind](value) };
+  if (kind === 'recipe') {
+    removed.fav = s.favs.includes(id);
+    s.favs = s.favs.filter((f) => f !== id);
+  }
+  if (kind !== 'bought') log(s, `removed ${removed.label}`);
+  return removed;
+}
+
+/** Undo removeFrom(). Safe to call after a sync: does nothing if it's back already. */
+export function putBack(s, removed) {
+  if (!removed) return false;
+  const list = s[LISTS[removed.kind]];
+  if (!list || list.some((x) => x.id === removed.value.id)) return false;
+  list.splice(Math.min(removed.index, list.length), 0, removed.value);
+  if (removed.kind === 'recipe' && removed.fav && !s.favs.includes(removed.value.id)) s.favs.push(removed.value.id);
+  // Drop the "removed …" line if nothing else happened since.
+  if (s.log[0]?.text === `removed ${removed.label}`) s.log.shift();
+  return true;
+}
+
+/** Clear a planned meal. Returns what's needed to put it back. */
+export function clearMeal(s, date, slot) {
+  const m = mealAt(s, date, slot);
+  if (!m) return null;
+  const removed = { kind: 'meal', date, slot, value: { ...m }, checks: s.checks[`${date}|${slot}`] };
+  setMeal(s, date, slot, null);
+  return removed;
+}
+export function putBackMeal(s, removed) {
+  if (!removed || mealAt(s, removed.date, removed.slot)) return false;
+  (s.plan[removed.date] ||= {})[removed.slot] = removed.value;
+  if (removed.checks) s.checks[`${removed.date}|${removed.slot}`] = removed.checks;
+  return true;
+}
+
+/** Custom recipes can be deleted; built-in ones can only be taken out of favourites. */
+export const isBuiltIn = (id) => BUILT_IN.some((r) => r.id === id);
 
 /** Things you'll often need again: past purchases not on the list now. */
 export function suggestions(s, fallback, n = 8) {
