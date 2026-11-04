@@ -6,6 +6,7 @@ import * as N from './nutrition.js';
 import { sendFeedback, flushOutbox } from './feedback.js';
 import * as C from './cloud.js';
 import * as S from './sync.js';
+import * as fx from './fx.js';
 import {
   $, $$, esc, rupees, plural, I, avatar, dayName, weekday, dayNum, longDate, timeAgo, fmtTime, isoOf,
   openSheet, closeSheet, toast, hideToast, runToastAction,
@@ -85,15 +86,29 @@ function removeWithUndo(kind, id, extra) {
 
 // ---------- Render ----------
 const view = $('#view');
+let shown = null;        // the screen on view now, to know when it changes
+let enterNext = false;   // play the entrance on the next redraw (Active / Bought, another week…)
 
 function render() {
   const ready = s.setup && s.members.length;
   document.body.classList.toggle('setup-mode', !ready);
-  if (!ready) { view.innerHTML = setupView(); return; }
+  if (!ready) {
+    const step = 'setup' + setupStep;
+    view.innerHTML = setupView();
+    if (shown !== step) fx.enter(view);
+    shown = step;
+    return;
+  }
   if (!me()) s.me = s.members[0].id;
   document.body.classList.toggle('readonly', viewOnly());
   if (!VIEWS[tab]) tab = 'home';
+  // Animate only what changed: a new screen rises in, new rows slide in.
+  // Plain redraws (a tap, a family sync) don't replay anything.
+  const before = fx.rowIds(view);
   view.innerHTML = VIEWS[tab]();
+  if (tab !== shown || enterNext) fx.enter(view);
+  else { fx.stopEnter(view); fx.markNew(view, before); }
+  shown = tab; enterNext = false;
   hideEdits(view);
   $$('.tabs button').forEach((b) => {
     const on = b.dataset.tab === tab;
@@ -617,6 +632,7 @@ function weekView() {
 }
 
 const VIEWS = { home: homeView, plan: planView, list: listView, week: weekView, family: familyView };
+const TABS = Object.keys(VIEWS);
 
 // ---------- Sheets ----------
 function switchSheet() {
@@ -983,6 +999,7 @@ function settingsSheet() {
       </div>
       <div class="field">Voice language<div class="chips">${Object.entries(LANGS).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="lang" value="${k}" ${s.lang === k ? 'checked' : ''}>${v}</label>`).join('')}</div></div>
       <div class="field">Appearance<div class="chips">${Object.entries(THEMES).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="theme" value="${k}" ${pref('theme', 'system') === k ? 'checked' : ''}>${v}</label>`).join('')}</div></div>
+      ${'vibrate' in navigator ? `<div class="field">Vibrate on taps<div class="chips">${Object.entries({ on: 'On', off: 'Off' }).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="haptics" value="${k}" ${pref('haptics', 'on') === k ? 'checked' : ''}>${v}</label>`).join('')}</div></div>` : ''}
       <button class="btn coral wide">Save</button>
     </form>`);
 }
@@ -1707,10 +1724,40 @@ $('#qr-photo').addEventListener('change', (e) => {
 
 // ---------- Actions ----------
 const byId = (arr, id) => arr.find((x) => x.id === id);
+
+/**
+ * Let a row on the page play its exit (bought, done, deleted), then make the change.
+ * Buttons inside a sheet change straight away. A second tap on a leaving row is ignored.
+ */
+const leaving = new WeakSet();
+function leave(el, kind, change) {
+  const row = el.classList.contains('row') ? el : el.closest('.row');
+  if (!row || !view.contains(row)) return change();
+  if (leaving.has(row)) return;
+  leaving.add(row);
+  fx.animateOut(row, kind).then(change);
+}
+
+// A short buzz for taps that change something.
+const BUZZ = {
+  'quick-add': 'tap', claim: 'tap', 'item-accept': 'tap', 'task-accept': 'tap', 'task-take': 'tap', 'quick-meal': 'tap',
+  'quick-buy': 'success', 'task-done': 'success',
+  'item-del': 'warn', 'task-del': 'warn', 'bought-del': 'warn', 'outside-remove': 'warn',
+};
 const after = (el, fn) => { if (el.dataset.keep) fn?.(); else if (el.dataset.close) closeSheet(); };
 
 const ACTIONS = {
-  tab: (el) => { tab = el.dataset.tab; setPref('tab', tab); closeSheet(); render(); scrollTo(0, 0); if (tab === 'family') refreshPhones(true); },
+  tab: (el) => {
+    const from = TABS.indexOf(tab), to = TABS.indexOf(el.dataset.tab);
+    tab = el.dataset.tab; setPref('tab', tab); closeSheet();
+    const go = () => { render(); scrollTo(0, 0); };
+    // Slide the page towards the tab that was tapped (the tab bar stays still).
+    if (from !== to && document.startViewTransition && !fx.reduced()) {
+      document.documentElement.dataset.dir = to > from ? 'fwd' : 'back';
+      document.startViewTransition(go);
+    } else go();
+    if (tab === 'family') refreshPhones(true);
+  },
   'close-sheet': () => closeSheet(),
   'toast-action': () => runToastAction(),
   scan: () => { closeSheet(); photo.click(); },
@@ -1767,7 +1814,7 @@ const ACTIONS = {
   },
 
   // meals
-  slot: (el) => { planSlot = el.dataset.slot; setPref('slot', planSlot); render(); },
+  slot: (el) => { planSlot = el.dataset.slot; setPref('slot', planSlot); enterNext = true; render(); },
   pick: (el) => pickSheet(el.dataset.date, el.dataset.slot),
   meal: (el) => mealSheet(el.dataset.date, el.dataset.slot),
   'quick-meal': (el) => { commit(null, () => M.setMeal(s, today(), 'd', el.dataset.rid)); mealSheet(today(), 'd'); },
@@ -1812,7 +1859,7 @@ const ACTIONS = {
   },
 
   // list
-  'list-mode': (el) => { listMode = el.dataset.mode; render(); },
+  'list-mode': (el) => { listMode = el.dataset.mode; enterNext = true; render(); },
   'quick-add': (el) => addTyped(el.dataset.name),
   item: (el) => itemSheet(el.dataset.id),
   claim: (el) => { const i = byId(s.items, el.dataset.id); commit(`You’re buying ${i.name}`, () => M.claim(s, i.id)); after(el, () => itemSheet(i.id)); },
@@ -1820,10 +1867,10 @@ const ACTIONS = {
   assign: (el) => { const i = byId(s.items, el.dataset.id); commit(`Asked ${M.firstName(s, el.dataset.m)} to buy ${i.name}`, () => M.assign(s, i.id, el.dataset.m)); itemSheet(i.id); },
   'item-accept': (el) => { const i = byId(s.items, el.dataset.id); commit(`You’re buying ${i.name}`, () => M.acceptItem(s, i.id)); after(el, () => itemSheet(i.id)); },
   'item-decline': (el) => { const i = byId(s.items, el.dataset.id); commit(`${i.name} is open for anyone`, () => M.declineItem(s, i.id)); after(el, () => itemSheet(i.id)); },
-  'quick-buy': (el) => { const i = byId(s.items, el.dataset.id); commit(`${i.name} marked bought`, () => M.buy(s, i.id)); },
+  'quick-buy': (el) => leave(el, 'done', () => { const i = byId(s.items, el.dataset.id); if (i) commit(`${i.name} marked bought`, () => M.buy(s, i.id)); }),
   'item-remove': (el) => { closeSheet(); removeWithUndo('item', el.dataset.id); },
-  'item-del': (el) => removeWithUndo('item', el.dataset.id),
-  'bought-del': (el) => removeWithUndo('bought', el.dataset.id),
+  'item-del': (el) => leave(el, 'delete', () => removeWithUndo('item', el.dataset.id)),
+  'bought-del': (el) => leave(el, 'delete', () => removeWithUndo('bought', el.dataset.id)),
   restore: (el) => { const b = byId(s.bought, el.dataset.id); commit(`${b.name} is back on the list`, () => M.restore(s, b.id)); },
   'share-list': () => {
     const text = `🛒 ${s.home.name} – shopping list\n` + sortItems(s.items).map((i) => `• ${i.name}${i.qty != null ? ' – ' + M.fmtQty(i.qty, i.unit) : ''}${i.status === 'claimed' ? ` (${M.firstName(s, i.by)} is buying)` : ''}`).join('\n');
@@ -1839,9 +1886,9 @@ const ACTIONS = {
   'task-accept': (el) => { const t = byId(s.tasks, el.dataset.id); commit(`Accepted: ${t.title}`, () => M.acceptTask(s, t.id)); after(el); },
   'task-decline': (el) => { const t = byId(s.tasks, el.dataset.id); commit('Okay. It’s open for anyone now.', () => M.declineTask(s, t.id)); after(el); },
   'task-release': (el) => { const t = byId(s.tasks, el.dataset.id); commit('Released for anyone', () => M.releaseTask(s, t.id)); after(el); },
-  'task-done': (el) => { const t = byId(s.tasks, el.dataset.id); commit(`Done: ${t.title}`, () => M.finishTask(s, t.id)); after(el); },
+  'task-done': (el) => leave(el, 'done', () => { const t = byId(s.tasks, el.dataset.id); if (t) commit(`Done: ${t.title}`, () => M.finishTask(s, t.id)); after(el); }),
   'task-remove': (el) => { closeSheet(); removeWithUndo('task', el.dataset.id); },
-  'task-del': (el) => removeWithUndo('task', el.dataset.id),
+  'task-del': (el) => leave(el, 'delete', () => removeWithUndo('task', el.dataset.id)),
 
   // family & recipes
   'member-remove': (el) => {
@@ -1858,10 +1905,10 @@ const ACTIONS = {
   bills: () => billsSheet(),
 
   // week, outside food, feedback
-  'week-prev': () => { weekOffset--; render(); },
-  'week-next': () => { weekOffset = Math.min(0, weekOffset + 1); render(); },
+  'week-prev': () => { weekOffset--; enterNext = true; render(); },
+  'week-next': () => { weekOffset = Math.min(0, weekOffset + 1); enterNext = true; render(); },
   'outside-new': () => outsideSheet(),
-  'outside-remove': (el) => removeWithUndo('outside', el.dataset.id),
+  'outside-remove': (el) => leave(el, 'delete', () => removeWithUndo('outside', el.dataset.id)),
   feedback: (el) => feedbackSheet(+el.dataset.rating || 0),
   'fb-snooze': () => { setPref('fb-snooze', String(Date.now() + 14 * 864e5)); render(); },
   'bill-remove': (el) => removeWithUndo('bill', el.dataset.id, () => { if (!$('#sheet-root').hidden) billsSheet(); }),
@@ -1902,7 +1949,9 @@ document.addEventListener('pointermove', (e) => {
   }
   swipe.dx = Math.min(0, dx);
   swipe.row.style.transform = `translateX(${swipe.dx}px)`;
-  swipe.row.classList.toggle('will-delete', swipe.dx < -swipe.row.offsetWidth * 0.35);
+  const will = swipe.dx < -swipe.row.offsetWidth * 0.35;
+  if (will !== swipe.row.classList.contains('will-delete')) fx.haptic('tap');
+  swipe.row.classList.toggle('will-delete', will);
 });
 function endSwipe(e) {
   if (!swipe) return;
@@ -1930,7 +1979,11 @@ document.addEventListener('click', (e) => {
   if (!el) return;
   const fn = ACTIONS[el.dataset.action];
   if (fn && viewOnly() && !VIEW_OK.has(el.dataset.action) && !el.dataset.action.startsWith('sync-')) { e.preventDefault(); return viewOnlyToast(); }
-  if (fn) { e.preventDefault(); fn(el); }
+  if (fn) {
+    e.preventDefault();
+    if (BUZZ[el.dataset.action]) fx.haptic(BUZZ[el.dataset.action]);
+    fn(el);
+  }
 });
 
 document.addEventListener('change', (e) => {
@@ -2045,6 +2098,7 @@ const FORMS = {
   settings: (f, d) => {
     closeSheet();
     setPref('theme', d.theme || 'system');
+    if (d.haptics) setPref('haptics', d.haptics);
     applyTheme();
     if (viewOnly()) { s.lang = d.lang || s.lang; M.save(s, { quiet: true }); return toast('Voice language saved'); }
     commit('Settings saved', () => {

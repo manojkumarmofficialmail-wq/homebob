@@ -14,6 +14,7 @@
   --safe-b: env(safe-area-inset-bottom, 0px);
   --ease: cubic-bezier(.2, .8, .2, 1);
   --dur: .18s;
+  --spring: cubic-bezier(.34, 1.56, .64, 1); /* a little overshoot, for presses and pops */
 
   /* Colour: light */
   --bg: #f6f3ec;
@@ -109,7 +110,6 @@ main {
   max-width: 560px; margin: 0 auto;
   padding: calc(var(--sp-4) + env(safe-area-inset-top, 0px)) var(--sp-4) calc(var(--nav-h) + 96px + var(--safe-b));
   display: flex; flex-direction: column; gap: var(--sp-3);
-  animation: page-in .22s var(--ease);
 }
 main:focus { outline: none; }
 body[data-tab="plan"] main, body[data-tab="family"] main, body[data-tab="week"] main { padding-bottom: calc(var(--nav-h) + var(--sp-8) + var(--safe-b)); }
@@ -513,11 +513,15 @@ body[data-tab="home"] .actions, body[data-tab="list"] .actions { display: flex; 
   max-height: 92vh; max-height: 92dvh; overflow-y: auto; overscroll-behavior: contain;
   background: var(--bg); border-radius: var(--r-xl) var(--r-xl) 0 0; box-shadow: var(--shadow-2);
   padding: var(--sp-2) var(--sp-5) calc(var(--sp-6) + var(--safe-b)); display: flex; flex-direction: column; gap: var(--sp-4);
-  animation: up .26s var(--ease);
+  animation: up .3s var(--ease);
+  transition: transform .32s var(--spring);
 }
+.sheet.dragging { transition: none; }
+.grip { touch-action: none; }
 .sheet:focus { outline: none; }
 .sheet.tall { min-height: 70vh; min-height: 70dvh; }
-.grip { width: 40px; height: 5px; border-radius: 3px; background: var(--line-strong); margin: 2px auto 0; flex: none; }
+.grip { width: 40px; height: 5px; border-radius: 3px; background: var(--line-strong); margin: 2px auto 0; flex: none; position: relative; cursor: grab; }
+.grip::after { content: ""; position: absolute; inset: -14px -40px; } /* bigger area to grab */
 .sheet-title { font-size: var(--fs-xl); font-weight: 800; letter-spacing: -0.02em; }
 .sheet-title.big { font-size: var(--fs-2xl); line-height: 1.15; }
 .sheet .rows .row { min-height: 58px; }
@@ -576,9 +580,50 @@ body.locked #toast, body.setup-mode #toast { bottom: calc(var(--sp-6) + var(--sa
 @keyframes up { from { transform: translateY(32px); opacity: 0; } }
 @keyframes fade { from { opacity: 0; } }
 @keyframes fade-up { from { transform: translateY(6px); opacity: 0; } }
-@keyframes page-in { from { opacity: .4; } }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 50%, transparent); } 100% { box-shadow: 0 0 0 26px transparent; } }
 @keyframes blink { 50% { opacity: .25; } }
+
+/* Screen entrance: cards rise in one after another (only when the screen changes, see js/fx.js) */
+main.entering > * { animation: rise .34s var(--ease) both; animation-delay: calc(var(--i, 0) * 32ms); }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+
+/* Tab change: the page slides towards the tab you tapped; the tab bar stays still */
+main { view-transition-name: page; }
+.tabs { view-transition-name: tabs; } /* drawn above the sliding page */
+::view-transition-old(root), ::view-transition-new(root),
+::view-transition-group(tabs), ::view-transition-new(tabs) { animation: none; }
+::view-transition-old(tabs) { display: none; }
+::view-transition-old(page) { animation: vt-out .16s ease-in both; }
+::view-transition-new(page) { animation: vt-in .26s var(--ease) both; }
+:root { --vt-dir: 1; }
+:root[data-dir="back"] { --vt-dir: -1; }
+@keyframes vt-out { to { opacity: 0; transform: translateX(calc(var(--vt-dir) * -28px)); } }
+@keyframes vt-in { from { opacity: 0; transform: translateX(calc(var(--vt-dir) * 28px)); } }
+
+/* The active tab icon pops when chosen */
+.tabs button.on .tab-ico { animation: pop .36s var(--spring); }
+@keyframes pop { 0% { transform: scale(.8); } 100% { transform: none; } }
+
+/* Presses: a quick squeeze, then a springy release */
+:is(.btn, button.pill, .chip:not(.sm), .act, .add-btn, .tick, .icon-btn, .face, .mic, .who, .pick, .hnc button, .day-row, .row-main) {
+  transition: transform .3s var(--spring), background var(--dur), color var(--dur), border-color var(--dur), box-shadow var(--dur), filter var(--dur);
+}
+:is(.btn:not(:disabled), button.pill, button.chip, label.chip, .act, .add-btn, .tick, .icon-btn, .face, .mic, .who, .pick, .hnc button):active { transform: scale(.95); transition-duration: .08s; }
+:is(.day-row, .row-main):active { transform: scale(.985); transition-duration: .08s; }
+.tabs button:active .tab-ico { transform: scale(.9); }
+
+/* Rows: new ones slide in with a soft highlight; finished ones tick, strike through, and go */
+.row.is-new { animation: row-in .34s var(--ease) both, row-glow 1.4s ease-out; }
+@keyframes row-in { from { opacity: 0; transform: translateY(-8px); } }
+@keyframes row-glow { from { background: var(--sage); } }
+.row.leaving { pointer-events: none; }
+.row.is-done .tick, .row.is-done .pill.green { background: var(--green); border-color: var(--green); color: var(--surface); }
+.row.is-done .tick { animation: pop .3s var(--spring); }
+.row.is-done .row-main b { text-decoration: line-through; text-decoration-thickness: 2px; color: var(--muted); }
+
+/* A closing sheet (a copy of it slides down; see slideAway in js/ui.js) */
+.sheet-ghost { position: fixed; inset: 0; z-index: 19; pointer-events: none; }
+.sheet-ghost .sheet, .sheet-ghost .backdrop { animation: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

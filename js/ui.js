@@ -105,6 +105,7 @@ export function closeSheet(silent) {
   if (!root || root.hidden) return;
   cleanup?.();
   cleanup = null;
+  if (silent !== true) slideAway(root);
   root.hidden = true;
   root.innerHTML = '';
   document.body.classList.remove('locked');
@@ -117,6 +118,63 @@ export function closeSheet(silent) {
   if (!silent && pushed) { pushed = false; history.back(); }
 }
 export const sheetOpen = () => !sheetRoot().hidden;
+
+// The closing sheet moves into a copy that slides down and fades, so #sheet-root is empty
+// straight away and "is a sheet open?" checks stay simple.
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+function slideAway(root) {
+  if (reducedMotion.matches || !root.firstElementChild) return;
+  document.querySelectorAll('.sheet-ghost').forEach((g) => g.remove());
+  const ghost = document.createElement('div');
+  ghost.className = 'sheet-ghost';
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.inert = true;
+  const sheet = $('.sheet', root);
+  const from = sheet?.style.transform || 'none'; // part-way through a drag
+  ghost.append(...root.childNodes);
+  document.body.append(ghost);
+  const done = () => ghost.remove();
+  try {
+    $('.backdrop', ghost)?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, fill: 'forwards' });
+    const a = sheet?.animate([{ transform: from }, { transform: 'translateY(100%)' }], { duration: 220, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards' });
+    a ? a.finished.then(done, done) : done();
+  } catch { done(); }
+  setTimeout(done, 400);
+}
+
+// Drag a sheet down by its top edge to close it; a short drag springs back.
+let drag = null;
+document.addEventListener('pointerdown', (e) => {
+  const sheet = e.target.closest?.('#sheet-root .sheet');
+  if (!sheet || e.button > 0 || e.target.closest('input, select, textarea, button, a, label, summary')) return;
+  const top = sheet.getBoundingClientRect().top;
+  if (e.clientY - top > 64 || sheet.scrollTop > 0) return; // only the top strip, and only when scrolled to the top
+  drag = { sheet, y: e.clientY, t: e.timeStamp, dy: 0, id: e.pointerId, on: false };
+});
+document.addEventListener('pointermove', (e) => {
+  if (!drag || e.pointerId !== drag.id) return;
+  const dy = Math.max(0, e.clientY - drag.y);
+  if (!drag.on && dy < 6) return;
+  if (!drag.on) { drag.on = true; drag.sheet.classList.add('dragging'); }
+  drag.dy = dy;
+  drag.sheet.style.transform = `translateY(${dy}px)`;
+  const bd = $('#sheet-root .backdrop');
+  if (bd) bd.style.opacity = String(Math.max(0.2, 1 - dy / (drag.sheet.offsetHeight || 1)));
+});
+function endDrag(e) {
+  if (!drag || e.pointerId !== drag.id) return;
+  const { sheet, dy, on, t } = drag;
+  drag = null;
+  if (!on) return;
+  sheet.classList.remove('dragging');
+  const fast = dy / Math.max(1, e.timeStamp - t) > 0.6; // a quick flick
+  if (e.type === 'pointerup' && (dy > sheet.offsetHeight * 0.3 || (fast && dy > 40))) { closeSheet(); return; }
+  sheet.style.transform = '';
+  const bd = $('#sheet-root .backdrop');
+  if (bd) bd.style.opacity = '';
+}
+document.addEventListener('pointerup', endDrag);
+document.addEventListener('pointercancel', endDrag);
 
 window.addEventListener('popstate', () => { pushed = false; closeSheet('back'); });
 
