@@ -12,7 +12,8 @@ Meal plans, one shared shopping list, chores, weekly family nutrition and food s
 | Path | What it is |
 |---|---|
 | `index.html`, `styles.css`, `js/` | The app (plain ES modules) |
-| `js/fx.js`, `js/emoji.js`, `js/wheel.js` | Motion helpers, food emoji for items and dishes, and the dinner spinner wheel |
+| `js/fx.js`, `js/emoji.js`, `js/wheel.js` | Motion helpers, food emoji for items and dishes, and the spinner sheet for other days and meals |
+| `js/photos.js`, `img/dishes/` | Plate photos for dishes (six stock photos, 480px webp) and a family's own dish photos, kept on the phone |
 | `js/nutrition.js` | Nutrition table (IFCT 2017 values), meal and weekly maths, outside-food estimates |
 | `js/feedback.js` | Feedback client with an offline outbox |
 | `js/cloud.js` | A private anonymous account per phone, and database calls (plain fetch to Supabase, no library) |
