@@ -981,7 +981,7 @@ function billsSheet() {
   const bills = [...s.bills].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 40);
   openSheet(`
     <h2 class="sheet-title big">Bills</h2>
-    ${bills.length ? `<ul class="rows">${bills.map((b) => `<li class="row">
+    ${bills.length ? `<ul class="card rows">${bills.map((b) => `<li class="row">
       <span class="row-main static"><b>${esc(b.shop || 'Bill')}</b><span class="meta">${dayName(b.date)}${b.count ? ' · ' + plural(b.count, 'item') : ''} · ${esc(who(b.by))}</span></span>
       <b class="amount">${rupees(b.total)}</b>
       ${delBtn('bill-remove', b.id, `${rupees(b.total)} bill${b.shop ? ' from ' + b.shop : ''}`)}</li>`).join('')}</ul>`
