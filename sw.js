@@ -1,6 +1,6 @@
 // Homzy service worker: works offline after the first visit.
 // Bump VERSION whenever app files change so phones pick up the update.
-const VERSION = 'homzy-v9';
+const VERSION = 'homzy-v10';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/app.js', 'js/model.js', 'js/ui.js', 'js/data.js', 'js/parse.js', 'js/speech.js', 'js/scan.js',

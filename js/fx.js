@@ -78,7 +78,7 @@ export async function animateOut(row, kind = 'delete') {
 }
 
 // ---------- Celebrations ----------
-const COLORS = ['#e8572e', '#f4a12b', '#d63f6f', '#2f9e6b', '#3c7fd6', '#8a5cd6', '#ffd23f'];
+const COLORS = ['#8aa765', '#557330', '#c9dba8', '#111111', '#7b6cf6', '#4aa3df', '#a78bfa'];
 
 /** A short burst of confetti from the top of the screen. Skipped for reduced motion. */
 export function confetti({ count = 90, duration = 1600 } = {}) {

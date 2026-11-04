@@ -48,7 +48,7 @@ function applyTheme() {
   if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
   else delete document.documentElement.dataset.theme;
   const dark = t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
-  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#16100d' : '#fff7ef'));
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#0d0d0d' : '#efefed'));
 }
 
 function persist() {
@@ -765,20 +765,27 @@ function drawCheckSheet(keepOpen) {
     const m = M.mealAt(s, ctx.date, ctx.slot);
     const r = M.recipe(s, m.rid);
     top = `
-      <p class="eyebrow">${SLOTS[ctx.slot]} · ${dayName(ctx.date, 'long')}</p>
-      <h2 class="sheet-title big">${esc(r.name)}</h2>
-      <div class="meta-line">
-        <div class="stepper sm">
-          <button data-action="meal-people" data-d="-1" aria-label="Fewer people">${I.minus}</button>
-          <output>${plural(m.people, 'person', 'people')}</output>
-          <button data-action="meal-people" data-d="1" aria-label="More people">${I.plus}</button>
+      <header class="sheet-hero">
+        <span class="plate" aria-hidden="true">${dishEmoji(r.name)}</span>
+        <p class="eyebrow">${SLOTS[ctx.slot]} · ${dayName(ctx.date, 'long')}</p>
+        <h2 class="sheet-title big">${esc(r.name)}</h2>
+        <div class="meta-line">
+          <div class="stepper sm">
+            <button data-action="meal-people" data-d="-1" aria-label="Fewer people">${I.minus}</button>
+            <output>${plural(m.people, 'person', 'people')}</output>
+            <button data-action="meal-people" data-d="1" aria-label="More people">${I.plus}</button>
+          </div>
+          ${r.mins ? `<span class="muted">${I.clock} ${r.mins} min</span>` : ''}
         </div>
-        ${r.mins ? `<span class="muted">${I.clock} ${r.mins} min</span>` : ''}
-      </div>
+      </header>
       ${nutritionChips(r, m.people)}`;
   } else {
-    top = `<h2 class="sheet-title big">Check ingredients</h2>
-      <p class="sub">${ctx.meals.map((x) => esc(M.recipe(s, M.mealAt(s, x.date, x.slot).rid).name)).join(' · ')}</p>`;
+    top = `<header class="sheet-hero">
+        <span class="plate" aria-hidden="true">🧺</span>
+        <p class="eyebrow">This week</p>
+        <h2 class="sheet-title big">Check ingredients</h2>
+        <p class="sub">${ctx.meals.map((x) => esc(M.recipe(s, M.mealAt(s, x.date, x.slot).rid).name)).join(' · ')}</p>
+      </header>`;
   }
   const html = `
     ${top}
