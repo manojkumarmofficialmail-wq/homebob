@@ -25,7 +25,7 @@ export function enter(main) {
   [...main.children].forEach((el, i) => el.style.setProperty('--i', Math.min(i, 8)));
   void main.offsetWidth; // restart the animation
   main.classList.add('entering');
-  enterTimer = setTimeout(() => main.classList.remove('entering'), 700);
+  enterTimer = setTimeout(() => main.classList.remove('entering'), 1600); // the slowest entrance (Week bars) is ~1.5s
 }
 /** Stop an entrance that is still running (another redraw came in). */
 export function stopEnter(main) {

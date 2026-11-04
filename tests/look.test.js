@@ -47,3 +47,21 @@ test('the wheel drawing escapes dish names', () => {
   assert.ok(svg.includes('&lt;b&gt;Dal'));
   assert.ok(!svg.includes('<b>'));
 });
+
+test('dishes get a plate photo when one fits, and never a misleading one', async () => {
+  const { stockPhoto, STOCK_PHOTOS } = await import('../js/photos.js');
+  assert.equal(stockPhoto('Veg biryani'), 'img/dishes/biryani.webp');
+  assert.equal(stockPhoto('Chicken biryani'), 'img/dishes/biryani.webp');
+  assert.equal(stockPhoto('Rice + fish curry'), 'img/dishes/fish.webp');
+  assert.equal(stockPhoto('Kappa + meen curry'), 'img/dishes/fish.webp');
+  assert.equal(stockPhoto('Dosa + sambar'), 'img/dishes/dosa.webp');
+  assert.equal(stockPhoto('Idiyappam + egg curry'), '', 'egg dishes skip the appam photo');
+  assert.equal(stockPhoto('Appam + veg stew'), 'img/dishes/appam.webp');
+  assert.equal(stockPhoto('Chapati + chana'), 'img/dishes/chapati.webp');
+  assert.equal(stockPhoto('Rice + dal'), 'img/dishes/ricedal.webp');
+  assert.equal(stockPhoto('Rice + chicken curry'), '', 'no dal photo for a chicken curry');
+  assert.equal(stockPhoto('Upma'), '');
+  // every photo is used by at least one built-in dinner
+  const used = new Set(RECIPES.map((r) => stockPhoto(r.name)).filter(Boolean));
+  for (const p of STOCK_PHOTOS) assert.ok(used.has(`img/dishes/${p}.webp`), p);
+});

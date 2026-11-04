@@ -39,6 +39,14 @@ export const I = {
   leaf: ico('<path d="M5 19c0-8 5-13 14-14-1 9-6 14-14 14zM5 19l6-6"/>', 'sm'),
   trash: ico('<path d="M4.5 7h15M9.5 7V4.8a.8.8 0 0 1 .8-.8h3.4a.8.8 0 0 1 .8.8V7M6.5 7l.8 12.2a1 1 0 0 0 1 .8h7.4a1 1 0 0 0 1-.8L17.5 7M10.2 11v5.5M13.8 11v5.5"/>'),
   cart: ico('<path d="M3 4h2.2l2.1 11h10.4l2-8H6.3"/><circle cx="9" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>'),
+  arrow: ico('<path d="M5 12h14M13 6l6 6-6 6"/>'),
+  up: ico('<path d="m6 15 6-6 6 6"/>'),
+  down: ico('<path d="m6 9 6 6 6-6"/>'),
+  spin: ico('<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/>'),
+  receipt: ico('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
+  keyboard: ico('<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/>'),
+  hand: ico('<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11M11 10V4a1.5 1.5 0 0 1 3 0v7M14 10.5V6a1.5 1.5 0 0 1 3 0v8a7 7 0 0 1-7 7 6 6 0 0 1-5-2.7l-1.8-3a1.6 1.6 0 0 1 2.7-1.7L8 15"/>'),
+  bowl: ico('<path d="M3 11h18a9 9 0 0 1-18 0z"/><path d="M9 7c0-2 2-2 2-4M14 7c0-2 2-2 2-4"/>'),
   sun: ico('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>'),
 };
 
