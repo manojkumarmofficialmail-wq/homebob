@@ -816,3 +816,39 @@ a.menu-row { text-decoration: none; color: inherit; }
   .hero .meal-title { font-size: 24px; padding-right: 64px; }
   .tile { width: 86px; }
 }
+
+/* ---------- Celebrations ---------- */
+.confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 39; }
+.cheer {
+  position: fixed; top: calc(var(--sp-4) + env(safe-area-inset-top, 0px)); left: 50%; z-index: 40;
+  display: flex; align-items: center; gap: var(--sp-3); max-width: calc(100% - 32px);
+  padding: var(--sp-3) var(--sp-5) var(--sp-3) var(--sp-4); border-radius: var(--r-pill);
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line); box-shadow: var(--shadow-2);
+  transform: translateX(-50%); animation: cheer-in .5s var(--spring) both;
+  transition: opacity .25s, transform .25s;
+}
+.cheer.out { opacity: 0; transform: translate(-50%, -12px); }
+.cheer-emoji { font-size: 34px; line-height: 1; animation: bounce .8s var(--spring) .1s both; }
+.cheer b { display: block; font-size: var(--fs-lg); font-weight: 800; }
+.cheer small { font-size: var(--fs-sm); color: var(--muted); font-weight: 600; }
+@keyframes cheer-in { from { opacity: 0; transform: translate(-50%, -24px) scale(.9); } }
+@keyframes bounce { 0% { transform: scale(.3) rotate(-20deg); } 60% { transform: scale(1.2) rotate(8deg); } 100% { transform: none; } }
+
+/* The list badge bounces when its number changes */
+.badge.bump { animation: pop .45s var(--spring); }
+
+/* Check marks draw themselves when a chore or item is finished */
+.row.is-done .tick .ico path, .row.is-done .pill .ico path { stroke-dasharray: 24; stroke-dashoffset: 24; animation: draw .32s .05s ease-out forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+
+/* Sound wave while listening */
+.wave { display: flex; align-items: center; gap: 5px; height: 28px; visibility: hidden; }
+.mic-wrap:has(.mic.on) .wave { visibility: visible; }
+.wave i { width: 5px; height: 100%; border-radius: 3px; background: var(--primary); transform: scaleY(.25); animation: wave 1s ease-in-out infinite; }
+.wave i:nth-child(2) { animation-delay: .15s; } .wave i:nth-child(3) { animation-delay: .3s; }
+.wave i:nth-child(4) { animation-delay: .45s; } .wave i:nth-child(5) { animation-delay: .6s; }
+@keyframes wave { 50% { transform: scaleY(1); } }
+
+/* Empty screens breathe a little */
+.empty-icon { animation: float-y 4s ease-in-out infinite; }
+@keyframes float-y { 50% { transform: translateY(-5px); } }

@@ -76,3 +76,62 @@ export async function animateOut(row, kind = 'delete') {
   row.style.overflow = 'hidden';
   await run(row, [{ height: h + 'px', minHeight: 0 }, { height: '0px', minHeight: 0, paddingTop: 0, paddingBottom: 0, borderBottomWidth: 0 }], { duration: 150, easing: 'cubic-bezier(.2,.8,.2,1)' });
 }
+
+// ---------- Celebrations ----------
+const COLORS = ['#e8572e', '#f4a12b', '#d63f6f', '#2f9e6b', '#3c7fd6', '#8a5cd6', '#ffd23f'];
+
+/** A short burst of confetti from the top of the screen. Skipped for reduced motion. */
+export function confetti({ count = 90, duration = 1600 } = {}) {
+  if (reduced() || document.hidden) return;
+  const c = document.createElement('canvas');
+  c.className = 'confetti';
+  c.setAttribute('aria-hidden', 'true');
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  const W = innerWidth, H = innerHeight;
+  c.width = W * dpr; c.height = H * dpr;
+  document.body.append(c);
+  const ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const bits = Array.from({ length: count }, () => ({
+    x: W / 2 + (Math.random() - 0.5) * W * 0.5, y: H * 0.3 + (Math.random() - 0.5) * 60,
+    vx: (Math.random() - 0.5) * 11, vy: -Math.random() * 11 - 4,
+    w: 6 + Math.random() * 6, h: 4 + Math.random() * 4, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.35,
+    color: COLORS[(Math.random() * COLORS.length) | 0], round: Math.random() < 0.3,
+  }));
+  const start = performance.now();
+  let last = start;
+  const frame = (now) => {
+    const dt = Math.min(2, (now - last) / 16.7); last = now;
+    const left = 1 - (now - start) / duration;
+    if (left <= 0) return c.remove();
+    ctx.clearRect(0, 0, W, H);
+    ctx.globalAlpha = Math.min(1, left * 2.5);
+    for (const b of bits) {
+      b.vy += 0.32 * dt; b.vx *= 0.99; b.x += b.vx * dt; b.y += b.vy * dt; b.r += b.vr * dt;
+      ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.r); ctx.fillStyle = b.color;
+      if (b.round) { ctx.beginPath(); ctx.arc(0, 0, b.h / 1.6, 0, 7); ctx.fill(); } else ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
+      ctx.restore();
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+  setTimeout(() => c.remove(), duration + 500); // if frames stop (phone locked)
+}
+
+let cheerTimer;
+/** A big friendly message near the top ("Shopping done!"), with confetti and a buzz. */
+export function cheer(emoji, text, sub = '') {
+  document.querySelector('.cheer')?.remove();
+  clearTimeout(cheerTimer);
+  const el = document.createElement('div');
+  el.className = 'cheer';
+  el.setAttribute('role', 'status');
+  el.innerHTML = `<span class="cheer-emoji" aria-hidden="true">${emoji}</span><span><b></b><small></small></span>`;
+  el.querySelector('b').textContent = text;
+  el.querySelector('small').textContent = sub;
+  if (!sub) el.querySelector('small').remove();
+  document.body.append(el);
+  confetti();
+  haptic('success');
+  cheerTimer = setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, 2600);
+}

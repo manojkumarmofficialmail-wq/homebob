@@ -59,11 +59,31 @@ function persist() {
 /** Make a change, save, and offer Undo. */
 function commit(message, change, extra) {
   const before = JSON.stringify(s);
+  const was = progress();
   const result = change();
   persist();
   if (message) toast(typeof message === 'function' ? message(result) : message, { label: 'Undo', run: () => { s = JSON.parse(before); persist(); } });
+  celebrate(was, progress());
   extra?.(result);
   return result;
+}
+
+// ---------- Celebrations ----------
+// Only for changes made on this phone (sync and Undo don't go through commit).
+function progress() {
+  const t = today();
+  return {
+    items: s.items.length,
+    bought: s.bought.length,
+    due: s.tasks.filter((x) => x.status !== 'done' && x.due <= t).length,
+    finishedAt: s.log.find((l) => l.text.startsWith('finished '))?.at || 0,
+    week: Array.from({ length: 7 }, (_, i) => addDays(t, i)).every((d) => M.mealAt(s, d, 'd')),
+  };
+}
+function celebrate(a, b) {
+  if (a.items > 0 && b.items === 0 && b.bought > a.bought) fx.cheer('🛒', 'Shopping done!', 'Everything on the list is bought');
+  else if (a.due > 0 && b.due === 0 && b.finishedAt > a.finishedAt) fx.cheer('✨', 'All done for today!', 'Every chore is finished. Great teamwork');
+  else if (!a.week && b.week) fx.cheer('🗓️', 'Whole week planned!', 'Seven dinners ready to go');
 }
 
 /**
@@ -120,7 +140,9 @@ function render() {
   document.body.dataset.tab = tab;
   const active = s.items.length;
   const badge = $('#list-badge');
+  const was = badge.textContent;
   badge.textContent = active; badge.hidden = !active;
+  if (was && active && String(active) !== was) { badge.classList.remove('bump'); void badge.offsetWidth; badge.classList.add('bump'); }
   const mine = M.forMe(s);
   const n = mine.items.length + mine.tasks.length;
   try { n ? navigator.setAppBadge?.(n) : navigator.clearAppBadge?.(); } catch { /* unsupported */ }
@@ -1138,6 +1160,7 @@ function speakSheet(more = false) {
     ${canListen ? `
       <div class="mic-wrap">
         <button class="mic" id="mic" aria-pressed="false" aria-label="Start listening">${I.mic}</button>
+        <span class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
         <p class="mic-state" id="mic-state" aria-live="polite">Tap the mic and speak</p>
       </div>
       <p class="heard" id="heard">Say several things at once, the way you would at home.</p>
@@ -1945,7 +1968,7 @@ const ACTIONS = {
     s.setup = true;
     tab = 'home'; setPref('tab', tab);
     persist();
-    toast(`Welcome home, ${self.name}`);
+    fx.cheer('🏡', `Welcome home, ${self.name}!`, 'Your home is ready');
   },
 
   // meals
