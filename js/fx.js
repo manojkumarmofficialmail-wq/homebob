@@ -35,12 +35,12 @@ export function stopEnter(main) {
 
 // ---------- Rows ----------
 /** Ids of the rows on screen now, to spot new ones after the next redraw. */
-export const rowIds = (root) => new Set([...root.querySelectorAll('.row[data-id]')].map((r) => r.dataset.id));
+export const rowIds = (root) => new Set([...root.querySelectorAll('.row[data-id], .tile[data-id]')].map((r) => r.dataset.id));
 
 /** After a redraw, rows that weren't there before slide in with a soft highlight. */
 export function markNew(root, before) {
   if (reduced()) return;
-  for (const row of root.querySelectorAll('.row[data-id]')) {
+  for (const row of root.querySelectorAll('.row[data-id], .tile[data-id]')) {
     if (!before.has(row.dataset.id)) row.classList.add('is-new');
   }
 }

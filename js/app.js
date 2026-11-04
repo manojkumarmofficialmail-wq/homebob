@@ -7,6 +7,8 @@ import { sendFeedback, flushOutbox } from './feedback.js';
 import * as C from './cloud.js';
 import * as S from './sync.js';
 import * as fx from './fx.js';
+import { itemLook, dishEmoji, dishHue } from './emoji.js';
+import { wheelSvg, spinTo } from './wheel.js';
 import {
   $, $$, esc, rupees, plural, I, avatar, dayName, weekday, dayNum, longDate, timeAgo, fmtTime, isoOf,
   openSheet, closeSheet, toast, hideToast, runToastAction,
@@ -46,7 +48,7 @@ function applyTheme() {
   if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
   else delete document.documentElement.dataset.theme;
   const dark = t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
-  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#0f1613' : '#f6f3ec'));
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#16100d' : '#fff7ef'));
 }
 
 function persist() {
@@ -110,7 +112,7 @@ function render() {
   else { fx.stopEnter(view); fx.markNew(view, before); }
   shown = tab; enterNext = false;
   hideEdits(view);
-  $$('.tabs button').forEach((b) => {
+  $$('.tabs [data-tab]').forEach((b) => {
     const on = b.dataset.tab === tab;
     b.classList.toggle('on', on);
     b.setAttribute('aria-current', on ? 'page' : 'false');
@@ -128,7 +130,7 @@ const head = (title, sub, extra = '') => `
   <header class="page-head">
     <div class="ph-text"><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ''}</div>
     ${extra}
-    <button class="me-btn" data-action="switch" aria-label="Using as ${esc(me()?.name)}. Switch person">${avatar(me())}</button>
+    <button class="me-btn ${tab === 'family' ? 'on' : ''}" data-action="tab" data-tab="family" aria-label="Family and settings (using Homzy as ${esc(me()?.name)})">${avatar(me())}</button>
   </header>`;
 
 const section = (title, right = '') => `<div class="sec-head"><h2 class="sec">${title}</h2>${right}</div>`;
@@ -141,6 +143,16 @@ const emptyState = (icon, title, text, action = '') => `
     <p class="empty-text">${text}</p>
     ${action}
   </div>`;
+
+// Food emoji in a soft coloured bubble, for items and dishes.
+const food = (name, size = '') => { const l = itemLook(name); return `<span class="food ${size}" style="--h:${l.h}" aria-hidden="true">${l.e}</span>`; };
+const dish = (name, size = '') => `<span class="food ${size}" style="--h:${dishHue(name)}" aria-hidden="true">${dishEmoji(name)}</span>`;
+/** Part of the day, for the greeting and the colours of the Tonight card. */
+function dayPart() {
+  const h = new Date().getHours();
+  return h >= 5 && h < 12 ? 'morning' : h >= 12 && h < 16 ? 'afternoon' : h >= 16 && h < 20 ? 'evening' : 'night';
+}
+const HELLO = { morning: ['Good morning', '☀️'], afternoon: ['Good afternoon', '🌤️'], evening: ['Good evening', '🌇'], night: ['Good evening', '🌙'] };
 
 // ----- Setup -----
 function setupView() {
@@ -191,7 +203,7 @@ function setupView() {
           <button class="add-btn" aria-label="Add">${I.plus}</button>
         </form>
       </div>
-      <p class="note">Everyone can tap their name on this phone to claim shopping and accept tasks.${C.configured() ? ' To put Homzy on everyone’s own phone, tap Connect next to their name in the Family tab.' : ''}</p>
+      <p class="note">Everyone can tap their name on this phone to claim shopping and accept tasks.${C.configured() ? ' To put Homzy on everyone’s own phone, tap your picture at the top, then Connect next to their name.' : ''}</p>
       <button class="btn coral wide" data-action="setup-finish">Create our home</button>
     </div>`;
 }
@@ -205,16 +217,16 @@ function homeView() {
   const unchecked = rows.filter((x) => x.state === 'check' && !x.onList).length;
   const mine = M.forMe(s);
   const favs = s.favs.map((id) => M.recipe(s, id)).filter(Boolean).slice(0, 4);
-  const shopping = sortItems(s.items).slice(0, 4);
+  const shopping = sortItems(s.items).slice(0, 10);
   const tasks = s.tasks.filter((x) => x.status !== 'done' && x.due <= t).sort(byTaskOrder);
   const ym = t.slice(0, 7);
   const spend = M.monthSpend(s, ym);
-  const hour = new Date().getHours();
-  const hello = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const part = dayPart();
+  const [hello, sky] = HELLO[part];
 
   return `
     ${head(`<span class="brand-title">Homzy</span>`, `${esc(s.home.name)} · ${S.linked() ? (viewOnly() ? 'View only' : 'Shared with family') : 'Private'}`, '<button class="install-btn" data-action="install">Install</button>')}
-    <p class="greet">${hello}, ${esc(me().name)}.</p>
+    <p class="greet">${hello}, ${esc(me().name)} <span aria-hidden="true">${sky}</span></p>
 
     ${mine.items.length || mine.tasks.length ? `
       <section class="card attention">
@@ -231,25 +243,29 @@ function homeView() {
         </ul>
       </section>` : ''}
 
-    <section class="card tonight">
+    <section class="card tonight hero" data-part="${part}">
+      <span class="hero-emoji" aria-hidden="true">${r ? dishEmoji(r.name) : '🍽️'}</span>
       <p class="eyebrow">Tonight · ${longDate(t)}</p>
       ${r ? `
         <h2 class="meal-title">${esc(r.name)}</h2>
         <div class="meta-line">
           <span>${plural(meal.people, 'person', 'people')}${r.mins ? ` · ${r.mins} min` : ''}</span>
-          ${!r.ing.length ? '<span class="pill sage">Planned</span>'
-            : unchecked ? `<span class="pill sun">${unchecked} to check</span>`
-            : '<span class="pill sage">Ready</span>'}
+          ${!r.ing.length ? '<span class="pill glass">Planned</span>'
+            : unchecked ? `<span class="pill glass">${unchecked} to check</span>`
+            : `<span class="pill glass">${I.check} Ready</span>`}
         </div>
-        <button class="btn coral wide" data-action="meal" data-date="${t}" data-slot="d">${unchecked ? 'Check ingredients' : 'View dinner plan'}</button>`
+        <button class="btn light wide" data-action="meal" data-date="${t}" data-slot="d">${unchecked ? 'Check ingredients' : 'View dinner plan'}</button>`
       : `
-        <h2 class="meal-title muted-title">What’s for dinner?</h2>
-        ${favs.length ? `<div class="chips">${favs.map((f) => `<button class="chip" data-action="quick-meal" data-rid="${f.id}">${esc(f.name)}</button>`).join('')}</div>` : ''}
-        <button class="btn coral wide" data-action="pick" data-date="${t}" data-slot="d">Choose dinner</button>`}
+        <h2 class="meal-title">What’s for dinner?</h2>
+        ${favs.length ? `<div class="chips">${favs.map((f) => `<button class="chip glass" data-action="quick-meal" data-rid="${f.id}">${dishEmoji(f.name)} ${esc(f.name)}</button>`).join('')}</div>` : ''}
+        <div class="btn-row">
+          <button class="btn light" data-action="pick" data-date="${t}" data-slot="d">Choose dinner</button>
+          <button class="btn glass" data-action="spin">🎡 Spin the wheel</button>
+        </div>`}
     </section>
 
     ${section('Shopping', s.items.length ? `<button class="link" data-action="tab" data-tab="list">See all ${s.items.length} ${I.chev}</button>` : '')}
-    ${shopping.length ? `<ul class="card rows">${shopping.map(itemRow).join('')}</ul>`
+    ${shopping.length ? `<ul class="tiles" aria-label="Shopping">${shopping.map(itemTile).join('')}<li><button class="tile add" data-action="hub-type"><span class="food lg" aria-hidden="true">${I.plus}</span><b>Add</b><small>items</small></button></li></ul>`
       : `<div class="card empty-card"><p class="empty-line">${I.cart}<span>Nothing to buy right now. Tap one to add it:</span></p>${quickChips(5)}</div>`}
 
     ${section('Today’s responsibilities', `<button class="link" data-action="task-new">${I.plus} Ask for a hand</button>`)}
@@ -327,6 +343,7 @@ const delBtn = (action, id, name) => `<button class="icon-btn del" data-action="
 
 const itemRow = (i) => `
   <li class="row swipe" data-swipe="item-del" data-id="${i.id}">
+    ${food(i.name)}
     <button class="row-main" data-action="item" data-id="${i.id}">
       <span class="row-title"><b>${esc(i.name)}</b>${qtyBadge(i.qty, i.unit)}</span><span class="meta">${esc(itemMeta(i))}</span>
     </button>
@@ -358,6 +375,19 @@ function taskPill(x) {
   return `<span class="pill sage">${x.time ? fmtTime(x.time) : 'Accepted'}</span>`;
 }
 
+// A shopping item as a tile on Home: big emoji, name, amount, and who is buying it.
+function itemTile(i) {
+  const l = itemLook(i.name);
+  const q = M.fmtQty(i.qty, i.unit);
+  const forMe = i.status === 'awaiting' && i.by === s.me;
+  const state = i.status === 'claimed' ? (i.by === s.me ? 'You’re buying' : `${Who(i.by)} is buying`) : forMe ? 'Asked you' : '';
+  return `<li><button class="tile ${forMe ? 'for-me' : ''}" data-action="item" data-id="${i.id}" aria-label="${esc([i.name, q, state].filter(Boolean).join(', '))}">
+    <span class="food lg" style="--h:${l.h}">${l.e}</span>
+    <b>${esc(i.name)}</b><small>${esc(q || (i.status === 'claimed' ? (i.by === s.me ? 'You' : Who(i.by)) : forMe ? 'Asked you' : 'To buy'))}</small>
+    ${i.status === 'claimed' ? `<span class="tile-badge">${avatar(M.member(s, i.by), 'xs')}</span>` : forMe ? '<span class="tile-badge dot"></span>' : ''}
+  </button></li>`;
+}
+
 const taskRow = (x) => `
   <li class="row swipe" data-swipe="task-del" data-id="${x.id}">
     <button class="tick" data-action="task-done" data-id="${x.id}" aria-label="Mark done: ${esc(x.title)}">${I.check}</button>
@@ -370,7 +400,7 @@ const taskRow = (x) => `
 
 function quickChips(n = 8) {
   const sug = M.suggestions(s, QUICK_ADD, n);
-  return sug.length ? `<div class="chips">${sug.map((x) => `<button class="chip sage-chip" data-action="quick-add" data-name="${esc(x)}">${esc(x)} ${I.plus}</button>`).join('')}</div>` : '';
+  return sug.length ? `<div class="chips">${sug.map((x) => `<button class="chip sage-chip" data-action="quick-add" data-name="${esc(x)}"><span aria-hidden="true">${itemLook(x).e}</span> ${esc(x)} ${I.plus}</button>`).join('')}</div>` : '';
 }
 
 // ----- Plan -----
@@ -396,6 +426,7 @@ function planView() {
         return `<li class="day-li ${d === today() ? 'is-today' : ''}">
           <button class="day-row" data-action="${r ? 'meal' : 'pick'}" data-date="${d}" data-slot="${planSlot}">
             <span class="date-col"><small>${d === today() ? 'TODAY' : weekday(d)}</small><b>${dayNum(d)}</b></span>
+            ${r ? dish(r.name) : out.length ? '<span class="food" style="--h:30" aria-hidden="true">🥡</span>' : '<span class="food blank" aria-hidden="true">+</span>'}
             <span class="day-main">
               ${r ? `<b class="day-meal">${esc(r.name)}</b><span class="meta">${outText ? `<span class="out-tag">${outText} instead</span>` : [r.mins && `${r.mins} min`, plural(m.people, 'person', 'people'), 'Edit'].filter(Boolean).join(' · ')}</span>`
                 : out.length ? `<b class="day-meal">Ate outside</b><span class="meta"><span class="out-tag">${outText.replace('Ate outside · ', '')}</span>${out[0].place ? ' · ' + esc(out[0].place) : ''}</span>`
@@ -455,6 +486,7 @@ function boughtView() {
       ${section(dayName(d, 'long'))}
       <ul class="card rows">${list.map((b) => `
         <li class="row">
+          ${food(b.name)}
           <span class="row-main static"><b>${esc(b.name)}${b.qty != null ? ` · ${esc(M.fmtQty(b.qty, b.unit))}` : ''}</b>
             <span class="meta">Bought by ${esc(who(b.by))} · ${new Date(b.at).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}${b.price ? ' · ' + rupees(b.price) : ''}</span></span>
           <button class="icon-btn quiet" data-action="restore" data-id="${b.id}" aria-label="Put ${esc(b.name)} back on the list" title="Put back on list">${I.restore}</button>
@@ -500,6 +532,7 @@ function familyView() {
     ${section('Our meals', `<button class="link" data-action="recipe-new">${I.plus} Add a recipe</button>`)}
     <ul class="card rows">
       ${recipes.length ? recipes.map((r) => `<li class="row">
+        ${dish(r.name)}
         <button class="row-main" data-action="recipe" data-id="${r.id}"><b>${esc(r.name)}</b>
           <span class="meta">${[r.mins && `${r.mins} min`, r.ing.length ? plural(r.ing.length, 'ingredient') : 'No ingredients yet'].filter(Boolean).join(' · ')}</span></button>
         <button class="icon-btn quiet on" data-action="fav" data-id="${r.id}" aria-label="Remove from favourites">${I.star}</button>
@@ -660,7 +693,7 @@ function pickSheet(date, slot) {
     const rest = all.filter((r) => !s.favs.includes(r.id) && match(r))
       .sort((a, b) => (b.slots.includes(slot) - a.slots.includes(slot)) || a.name.localeCompare(b.name));
     const btn = (r) => `<li><button class="pick ${r.id === current ? 'on' : ''}" data-action="set-meal" data-rid="${r.id}">
-      <span><b>${esc(r.name)}</b><span class="meta">${[r.mins && `${r.mins} min`, r.veg === false ? 'Non-veg' : 'Veg', kcalPer(r)].filter(Boolean).join(' · ')}</span></span>${r.id === current ? I.check : ''}</button></li>`;
+      <span class="pick-l">${dish(r.name)}<span class="pick-t"><b>${esc(r.name)}</b><span class="meta">${[r.mins && `${r.mins} min`, r.veg === false ? 'Non-veg' : 'Veg', kcalPer(r)].filter(Boolean).join(' · ')}</span></span></span>${r.id === current ? I.check : ''}</button></li>`;
     return `
       ${favs.length ? `<li class="pick-head">Favourites</li>${favs.map(btn).join('')}` : ''}
       ${rest.length ? `<li class="pick-head">${k ? 'Matches' : SLOTS[slot] + ' ideas'}</li>${rest.slice(0, 40).map(btn).join('')}` : ''}
@@ -669,6 +702,7 @@ function pickSheet(date, slot) {
   openSheet(`
     <h2 class="sheet-title">${SLOTS[slot]} · ${dayName(date, 'long')}</h2>
     <input class="search" id="pick-q" placeholder="Search appam, dal, fish…" autocomplete="off" aria-label="Search meals">
+    ${viewOnly() ? '' : `<button class="spin-strip" data-action="spin" data-date="${date}" data-slot="${slot}"><span aria-hidden="true">🎡</span><span><b>Can’t decide?</b> Spin the wheel</span>${I.chev}</button>`}
     <ul class="picks" id="pick-list" data-date="${date}" data-slot="${slot}">${draw('')}</ul>
     ${current ? `<button class="btn ghost wide danger" data-action="clear-meal">Clear ${SLOTS[slot].toLowerCase()}</button>` : ''}`, {
     tall: true,
@@ -797,7 +831,7 @@ function itemSheet(id) {
     <div class="status-box"><b>No one is buying yet</b><span>Take it on, or ask someone.</span></div>
     <button class="btn coral wide" data-action="claim" data-id="${id}" data-keep="1">I’ll buy</button>
     <p class="field-label">Ask someone</p>
-    <div class="chips">${s.members.filter((m) => m.id !== s.me).map((m) => `<button class="chip" data-action="assign" data-id="${id}" data-m="${m.id}">${avatar(m, 'sm')} ${esc(m.name)}</button>`).join('') || '<span class="muted small">Add family members in the Family tab.</span>'}</div>`;
+    <div class="chips">${s.members.filter((m) => m.id !== s.me).map((m) => `<button class="chip" data-action="assign" data-id="${id}" data-m="${m.id}">${avatar(m, 'sm')} ${esc(m.name)}</button>`).join('') || '<span class="muted small">Add family members under Family (your picture at the top).</span>'}</div>`;
   else if (i.status === 'awaiting') status = mine ? `
     <div class="status-box warm"><b>${esc(Who(i.addedBy))} asked you to buy this</b><span>Accept to show everyone you’re on it.</span></div>
     <div class="btn-row"><button class="btn ghost" data-action="item-decline" data-id="${id}" data-keep="1">Can’t today</button><button class="btn coral" data-action="item-accept" data-id="${id}" data-keep="1">Accept</button></div>`
@@ -1002,6 +1036,91 @@ function settingsSheet() {
       ${'vibrate' in navigator ? `<div class="field">Vibrate on taps<div class="chips">${Object.entries({ on: 'On', off: 'Off' }).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="haptics" value="${k}" ${pref('haptics', 'on') === k ? 'checked' : ''}>${v}</label>`).join('')}</div></div>` : ''}
       <button class="btn coral wide">Save</button>
     </form>`);
+}
+
+// ---------- The + menu ----------
+function hubSheet() {
+  const tile = (action, emoji, title, sub) => `<button class="hub-tile" data-action="${action}"><span class="hub-emoji" aria-hidden="true">${emoji}</span><b>${title}</b><span>${sub}</span></button>`;
+  openSheet(`
+    <h2 class="sheet-title big">What would you like to do?</h2>
+    <div class="hub">
+      ${tile('speak', '🎤', 'Speak', 'Say a few items at once')}
+      ${tile('scan', '🧾', 'Scan a bill', 'Save what you spent')}
+      ${tile('hub-type', '⌨️', 'Type items', 'Add to the shopping list')}
+      ${tile('spin', '🎡', 'Spin for dinner', 'Let the wheel pick')}
+      ${tile('task-new', '🙋', 'Ask for a hand', 'A chore for the family')}
+      ${tile('outside-new', '🥡', 'Ate outside', 'Hotel, takeaway, tea shop')}
+    </div>`);
+}
+
+// ---------- Dinner spinner ----------
+let spin = null; // { dishes, rot, busy, pick, date, slot }
+
+/** Up to 8 dishes for the wheel: favourites first, then family dishes for that meal, mixed up. */
+function spinDishes(slot) {
+  const fits = (r) => (r.slots || 'bld').includes(slot);
+  const favs = s.favs.map((id) => M.recipe(s, id)).filter((r) => r && fits(r));
+  const rest = M.allRecipes(s).filter(fits).sort(() => Math.random() - 0.5);
+  return [...new Map([...favs, ...rest].map((r) => [r.id, r])).values()].slice(0, 8);
+}
+
+function spinSheet(date = today(), slot = 'd') {
+  const dishes = spinDishes(slot);
+  if (dishes.length < 2) return pickSheet(date, slot);
+  spin = { dishes, rot: 0, busy: false, pick: null, date, slot };
+  openSheet(`
+    <h2 class="sheet-title big">Can’t decide? Spin it!</h2>
+    <p class="sub">${SLOTS[slot]} for ${dayName(date).toLowerCase()} · ${s.favs.length ? 'your favourites and family dishes' : 'popular family dishes'}</p>
+    <div class="wheel-wrap">
+      <span class="wheel-pointer" aria-hidden="true"></span>
+      <div class="wheel" id="wheel">${wheelSvg(dishes.map((r) => ({ name: r.name, emoji: dishEmoji(r.name) })))}</div>
+      <button class="wheel-hub" data-action="spin-go" aria-label="Spin the wheel">Spin</button>
+    </div>
+    <div id="spin-result" class="spin-result" aria-live="polite"></div>
+    <button class="btn coral wide" data-action="spin-go" id="spin-btn">🎡 Spin the wheel</button>`, { onClose: () => { spin = null; } });
+}
+
+function spinGo() {
+  if (!spin || spin.busy) return;
+  const n = spin.dishes.length;
+  const i = Math.floor(Math.random() * n);
+  spin.rot = spinTo(spin.rot, i, n, { jitter: Math.random() - 0.5, turns: 5 + Math.floor(Math.random() * 2) });
+  spin.busy = true;
+  const pick = spin.pick = spin.dishes[i];
+  $('#spin-result').innerHTML = '';
+  $('#spin-btn').disabled = true;
+  const wheel = $('#wheel');
+  wheel.classList.add('spinning');
+  wheel.style.transform = `rotate(${spin.rot}deg)`;
+  let done = false;
+  const land = () => {
+    if (done || !spin || spin.pick !== pick) return;
+    done = true;
+    spin.busy = false;
+    wheel.classList.remove('spinning');
+    spinResult();
+  };
+  if (fx.reduced()) return land();
+  wheel.addEventListener('transitionend', land, { once: true });
+  setTimeout(land, 4300); // in case the animation is paused (phone locked, tab hidden)
+}
+
+function spinResult() {
+  const r = spin.pick;
+  const has = M.mealAt(s, spin.date, spin.slot);
+  const when = `${dayName(spin.date).toLowerCase()}’s ${SLOTS[spin.slot].toLowerCase()}`;
+  $('#spin-result').innerHTML = `
+    <div class="spin-card">
+      ${dish(r.name, 'lg')}
+      <span><small>The wheel says…</small><b>${esc(r.name)}</b>
+        <span class="meta">${[r.mins && `${r.mins} min`, r.veg === false ? 'Non-veg' : 'Veg', kcalPer(r)].filter(Boolean).join(' · ')}</span></span>
+    </div>
+    <button class="btn coral wide" data-action="spin-plan" data-rid="${r.id}">${has ? 'Make it' : 'Plan it for'} ${when}</button>`;
+  const again = $('#spin-btn');
+  again.disabled = false;
+  again.textContent = 'Spin again';
+  again.className = 'btn ghost wide';
+  fx.haptic('success');
 }
 
 // ---------- Speak, then check before adding ----------
@@ -1501,7 +1620,7 @@ function joinSheet() {
 
 /** Join with a code from a QR link or typed in. Asks first if this phone has its own home. */
 function joinHome(code) {
-  if (S.linked()) return errorSheet('This phone is already connected to a home. Disconnect it in the Family tab first.');
+  if (S.linked()) return errorSheet('This phone is already connected to a home. Disconnect it under Family (your picture at the top) first.');
   if (s.setup) {
     return confirmSheet('Join your family’s home?',
       `This phone already has its own Homzy home. Joining replaces it with your family’s home. <button type="button" class="link" data-action="backup">Download a backup first</button>`,
@@ -1741,7 +1860,7 @@ function leave(el, kind, change) {
 // A short buzz for taps that change something.
 const BUZZ = {
   'quick-add': 'tap', claim: 'tap', 'item-accept': 'tap', 'task-accept': 'tap', 'task-take': 'tap', 'quick-meal': 'tap',
-  'quick-buy': 'success', 'task-done': 'success',
+  'quick-buy': 'success', 'task-done': 'success', 'spin-plan': 'success', hub: 'tap',
   'item-del': 'warn', 'task-del': 'warn', 'bought-del': 'warn', 'outside-remove': 'warn',
 };
 const after = (el, fn) => { if (el.dataset.keep) fn?.(); else if (el.dataset.close) closeSheet(); };
@@ -1762,6 +1881,22 @@ const ACTIONS = {
   'toast-action': () => runToastAction(),
   scan: () => { closeSheet(); photo.click(); },
   speak: () => speakSheet(),
+  hub: () => hubSheet(),
+  'hub-type': () => {
+    closeSheet();
+    listMode = 'active';
+    if (tab !== 'list') ACTIONS.tab({ dataset: { tab: 'list' } });
+    setTimeout(() => $('#list-add-text')?.focus(), 350);
+  },
+  spin: (el) => spinSheet(el.dataset.date || today(), el.dataset.slot || 'd'),
+  'spin-go': () => spinGo(),
+  'spin-plan': (el) => {
+    if (!spin) return;
+    const { date, slot } = spin;
+    const r = M.recipe(s, el.dataset.rid);
+    commit(`${r.name} it is! 🎉`, () => M.setMeal(s, date, slot, r.id));
+    mealSheet(date, slot);
+  },
   switch: () => switchSheet(),
   be: (el) => {
     s.me = el.dataset.id; persist();

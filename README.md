@@ -3,7 +3,7 @@
 Meal plans, one shared shopping list, chores, weekly family nutrition and food spend (groceries and food from outside) for Indian homes. It's an installable PWA with no build step.
 
 - **Household data** (lists, meals, bills, outside food) is kept on the phone, in `localStorage`, and works offline.
-- **Family sync** (optional, no email or password): on the Family tab, the owner taps **Connect** next to a family member and a QR code appears. That person scans it with their phone camera and their phone joins the home as **Can edit** or **View only**. Phones sync through Supabase every ~15 seconds while open, and merge changes made at the same time.
+- **Family sync** (optional, no email or password): under Family (tap your picture at the top), the owner taps **Connect** next to a family member and a QR code appears. That person scans it with their phone camera and their phone joins the home as **Can edit** or **View only**. Phones sync through Supabase every ~15 seconds while open, and merge changes made at the same time.
 - **Feedback** goes to `/api/feedback`, a Vercel function that saves it in Supabase.
 - **Family survey** at `/survey`: a short tour of the features and 12 quick questions. No login; answers go to Supabase through `/api/survey`.
 
@@ -12,6 +12,7 @@ Meal plans, one shared shopping list, chores, weekly family nutrition and food s
 | Path | What it is |
 |---|---|
 | `index.html`, `styles.css`, `js/` | The app (plain ES modules) |
+| `js/fx.js`, `js/emoji.js`, `js/wheel.js` | Motion helpers, food emoji for items and dishes, and the dinner spinner wheel |
 | `js/nutrition.js` | Nutrition table (IFCT 2017 values), meal and weekly maths, outside-food estimates |
 | `js/feedback.js` | Feedback client with an offline outbox |
 | `js/cloud.js` | A private anonymous account per phone, and database calls (plain fetch to Supabase, no library) |
@@ -65,7 +66,7 @@ To try two phones with the mock, open `http://localhost:5173` and `http://127.0.
    - `ALLOWED_ORIGINS` (optional) = e.g. `https://homzy.in` if you add a custom domain
 3. Deploy. To check it worked:
    - **Feedback:** open the app, go to **Family → Send feedback**, send a message, and look in Supabase **Table Editor → feedback**.
-   - **Family sync:** add a family member on the Family tab, tap **Connect** next to their name, and scan the QR code with another phone's camera.
+   - **Family sync:** add a family member under Family (your picture at the top), tap **Connect** next to their name, and scan the QR code with another phone's camera.
 
 Using the CLI instead: `npm i -g vercel`, then `vercel` for a preview and `vercel --prod` for production.
 
