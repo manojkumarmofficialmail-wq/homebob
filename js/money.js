@@ -19,7 +19,7 @@ export function addMonths(date, n, day = parse(date).d) {
   return `${ym}-${pad(Math.min(day, daysInMonth(ym)))}`;
 }
 export const prevMonth = (ym) => addMonths(`${ym}-01`, -1).slice(0, 7);
-export const monthName = (ym, style = 'long') => new Date(`${ym}-15T12:00:00Z`).toLocaleDateString('en-IN', { month: style, timeZone: 'UTC' });
+export const monthName = (ym, style = 'long', loc = 'en-IN') => new Date(`${ym}-15T12:00:00Z`).toLocaleDateString(loc, { month: style, timeZone: 'UTC' });
 const round2 = (n) => Math.round(n * 100) / 100;
 
 // ---------- Daily help & deliveries ----------
