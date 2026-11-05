@@ -64,7 +64,7 @@
   --cream: #f7f3e8;          /* cards and buttons sitting on the stage */
   --sage-lt: #a9c48a;        /* sage text on black */
   --disc: #111111;
-  --display: "Bricolage Grotesque", "Noto Sans", system-ui, sans-serif;
+  --display: "Bricolage Grotesque", "Noto Sans", "Noto Sans Malayalam", "Noto Sans Devanagari", "Noto Sans Tamil", system-ui, sans-serif;
   --ease-out: cubic-bezier(.2, .8, .2, 1);
   --ease-spring: cubic-bezier(.3, 1.4, .5, 1);
   --ease-wheel: cubic-bezier(.17, .84, .22, 1);
@@ -110,7 +110,7 @@
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--ink); overflow-x: hidden;
-  font: var(--fs-md)/1.45 "Noto Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Malayalam", "Noto Sans Devanagari", sans-serif;
+  font: var(--fs-md)/1.45 "Noto Sans", "Noto Sans Malayalam", "Noto Sans Devanagari", "Noto Sans Tamil", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
 }
 body.locked { overflow: hidden; }
@@ -1829,3 +1829,10 @@ main.entering .fold:nth-of-type(n+4), main.entering .week-row { animation-delay:
 @media (prefers-reduced-motion: reduce) {
   .kitchen-tab.on .fab { animation: none; }
 }
+
+/* Malayalam, Hindi and Tamil: Bricolage has no Indic letters and its tight letter-spacing
+   breaks joined letters, so headings use Noto at normal spacing. */
+:root:not([lang="en"]) :is(.page-head h1, .greet, .display, .sheet-title, .sec, .dw-name, .planned h2, .tell b, .heard, .wk-kcal, .mh-total, .spend-card b, .ws-top b, .pl-date b) { letter-spacing: 0; }
+:root:not([lang="en"]) .dw-label, :root:not([lang="en"]) .home-date, :root:not([lang="en"]) .wr-text small, :root:not([lang="en"]) .spend-card small, :root:not([lang="en"]) .wc-head, :root:not([lang="en"]) .dh-eyebrow { letter-spacing: 0; }
+:root:not([lang="en"]) .page-head h1 { font-size: 26px; line-height: 1.25; }
+:root:not([lang="en"]) .dw-name { font-size: 22px; line-height: 1.25; }

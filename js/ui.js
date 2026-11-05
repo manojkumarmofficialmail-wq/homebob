@@ -1,11 +1,13 @@
 // Small UI helpers shared by the screens: icons, escaping, dates, sheets and toasts.
 import { today, addDays } from './model.js';
+import { t, locale } from './i18n.js';
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const rupees = (n) => '₹' + Math.round(n || 0).toLocaleString('en-IN');
-export const plural = (n, word, many) => `${n} ${n === 1 ? word : many || word + 's'}`;
+/** "3 items", in the app language (the singular and plural words are translated separately). */
+export const plural = (n, word, many) => `${n} ${t(n === 1 ? word : many || word + 's')}`;
 
 const ico = (d, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 export const I = {
@@ -63,19 +65,19 @@ export function avatar(m, size = '') {
 // ---------- Dates ----------
 const dt = (d) => new Date(d + 'T12:00');
 export function dayName(d, style = 'short') {
-  if (d === today()) return 'Today';
-  if (d === addDays(today(), 1)) return 'Tomorrow';
-  if (d === addDays(today(), -1)) return 'Yesterday';
-  return dt(d).toLocaleDateString('en-IN', style === 'long' ? { weekday: 'long', day: 'numeric', month: 'short' } : { weekday: 'short', day: 'numeric', month: 'short' });
+  if (d === today()) return t('Today');
+  if (d === addDays(today(), 1)) return t('Tomorrow');
+  if (d === addDays(today(), -1)) return t('Yesterday');
+  return dt(d).toLocaleDateString(locale(), style === 'long' ? { weekday: 'long', day: 'numeric', month: 'short' } : { weekday: 'short', day: 'numeric', month: 'short' });
 }
-export const weekday = (d) => dt(d).toLocaleDateString('en-IN', { weekday: 'short' }).toUpperCase();
+export const weekday = (d) => dt(d).toLocaleDateString(locale(), { weekday: 'short' }).toUpperCase();
 export const dayNum = (d) => dt(d).getDate();
-export const longDate = (d) => dt(d).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }).toUpperCase();
+export const longDate = (d) => dt(d).toLocaleDateString(locale(), { weekday: 'short', day: 'numeric', month: 'short' }).toUpperCase();
 export function timeAgo(ms) {
   const d = new Date(ms);
   const time = d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
   const day = iso2(d);
-  return day === today() ? `Today, ${time}` : `${dayName(day)}, ${time}`;
+  return `${dayName(day)}, ${time}`;
 }
 const iso2 = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 export const isoOf = iso2;
