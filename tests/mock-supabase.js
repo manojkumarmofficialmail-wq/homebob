@@ -1,4 +1,4 @@
-// A tiny in-memory stand-in for the parts of Supabase that Homzy uses, for local
+// A tiny in-memory stand-in for the parts of Supabase that Homelu uses, for local
 // testing only (npm start with MOCK_SUPABASE=1). Each phone gets an anonymous account.
 // It mirrors the rules in supabase/schema.sql; the real rules are what protect data.
 import crypto from 'node:crypto';

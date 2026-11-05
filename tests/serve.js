@@ -71,4 +71,4 @@ http.createServer(async (req, res) => {
   } catch {
     res.statusCode = 404; res.end('Not found');
   }
-}).listen(port, () => console.log(`Homzy on http://localhost:${port}`));
+}).listen(port, () => console.log(`Homelu on http://localhost:${port}`));

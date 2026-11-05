@@ -93,7 +93,7 @@ async function call(path, { method = 'GET', body, token, headers = {} } = {}) {
 }
 
 const MESSAGES = {
-  already_in_household: 'This phone is already connected to another Homzy home. Disconnect it there first.',
+  already_in_household: 'This phone is already connected to another Homelu home. Disconnect it there first.',
   invite_not_found: 'That QR code isn’t right, or it was cancelled. Ask for a new one.',
   invite_used: 'That QR code was already used. Ask for a new one.',
   invite_expired: 'That QR code has expired. Ask for a new one.',

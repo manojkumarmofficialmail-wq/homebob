@@ -1,4 +1,4 @@
--- Homzy database. Run in Supabase → SQL Editor → New query. Safe to run again
+-- Homelu database. Run in Supabase → SQL Editor → New query. Safe to run again
 -- after an update: it only adds or replaces things, it never deletes data.
 --
 -- Part 1: feedback. The app never talks to this table directly: /api/feedback

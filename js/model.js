@@ -1,9 +1,10 @@
-// Homzy data and every change to it. No DOM code here. Family sync (sync.js)
+// Homelu data and every change to it. No DOM code here. Family sync (sync.js)
 // listens to save() and merges in changes from other phones.
 import { RECIPES, CATALOG } from './data.js';
 import { matchCatalog } from './parse.js';
 import * as $ from './money.js';
 
+// The app was called Homzy; the "homzy:" storage prefix stays so families keep their data.
 const KEY = 'homzy:v1';
 const VERSION = 2;
 const BASE_PEOPLE = 4; // recipe quantities are written for 4 people
@@ -35,7 +36,7 @@ export const fresh = () => ({
   outside: [],   // food from outside: { id, date, slot, kind, weight, place, amount, people, by, at }
   stock: [],     // kitchen stock: { id, name, cat, qty, unit, low, at, by } (qty in g, ml, pcs, pkt or bottle)
   stockSince: null, // first day stock was kept: meals before it are never taken out of stock
-  foods: {},     // nutrition for ingredients Homzy didn't know: { key: { v: [kcal, protein, carbs, fat, fibre], est } }
+  foods: {},     // nutrition for ingredients Homelu didn't know: { key: { v: [kcal, protein, carbs, fat, fibre], est } }
   services: [],  // daily help & deliveries: { id, name, kind, per, qty, unit, rate, days, upi, phone, since, active }
   svcLog: {},    // { serviceId: { date: qty } }: only days that differ from usual (0 = didn't come)
   dues: [],      // bills & renewals: { id, name, kind, amount, every, due, day, remind, upi, account, booked, history, active }
@@ -48,7 +49,7 @@ export const fresh = () => ({
 function migrate(d) {
   if (!d || typeof d !== 'object') return fresh();
   if (d.v === VERSION) return { ...fresh(), ...d };
-  // v1 (first Homzy) → v2: keep list, tasks, bills, home name and meal names.
+  // v1 (first Homelu) → v2: keep list, tasks, bills, home name and meal names.
   const s = fresh();
   const me = { id: uid(), name: 'Me', hue: HUES[0] };
   s.setup = true;
@@ -105,7 +106,7 @@ export function wipe() {
 
 export function fromBackup(text) {
   const d = JSON.parse(text);
-  if (!d || typeof d !== 'object' || !('v' in d)) throw new Error('Not a Homzy backup');
+  if (!d || typeof d !== 'object' || !('v' in d)) throw new Error('Not a Homelu backup');
   return migrate(d);
 }
 

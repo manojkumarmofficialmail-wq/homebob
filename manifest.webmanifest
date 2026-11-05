@@ -1,6 +1,6 @@
 {
-  "name": "Homzy – home made easy",
-  "short_name": "Homzy",
+  "name": "Homelu – home made easy",
+  "short_name": "Homelu",
   "description": "Scan bills, speak your shopping list, track kitchen stock, plan meals and chores.",
   "id": "./",
   "start_url": "./",
@@ -18,7 +18,7 @@
     { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
-    { "name": "Tell Homzy", "url": "./?do=speak" },
+    { "name": "Tell Homelu", "url": "./?do=speak" },
     { "name": "Scan a bill", "url": "./?do=scan" }
   ]
 }

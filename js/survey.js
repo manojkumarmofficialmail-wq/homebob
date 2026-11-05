@@ -27,7 +27,7 @@ const q = (n, title, body, hint = '') => `
 function tour() {
   return `
     <section class="card tour">
-      <h2 class="sec">What Homzy does</h2>
+      <h2 class="sec">What Homelu does</h2>
       <ul class="feature-list">${FEATURES.map((f) => `<li><b>${esc(f.name)}</b><span>${esc(f.what)}</span></li>`).join('')}</ul>
       <p class="hint">Also: ${EXTRAS.map(esc).join(' · ')}.</p>
     </section>`;
@@ -37,7 +37,7 @@ function form() {
   let n = 0;
   return `
     <form id="survey-form" class="stack" novalidate>
-      ${q(++n, 'Have you used Homzy?', radios('used_app', USED))}
+      ${q(++n, 'Have you used Homelu?', radios('used_app', USED))}
       ${q(++n, 'How many people usually eat at home?', radios('household_size', asObj(SIZES)))}
       ${q(++n, 'Who mostly plans meals and shopping?', radios('planner', PLANNER))}
       ${q(++n, 'Languages spoken at home', checks('languages', LANGS), 'Pick all that apply.')}
@@ -50,10 +50,10 @@ function form() {
         </ul>`, 'Even if you haven’t tried it, tell us if it sounds useful.')}
       ${q(++n, 'Which one would your family use most?', radios('favourite', Object.fromEntries(FEATURES.map((f) => [f.id, f.name]))))}
       ${q(++n, 'How do you manage groceries and meals today?', checks('today_methods', TODAY), 'Pick all that apply.')}
-      ${q(++n, 'What’s missing, or what would make Homzy a must-have?', `<label class="field"><span class="sr">What’s missing</span><textarea name="missing" maxlength="1500" placeholder="e.g. Reminders when milk runs out, a festival menu, …"></textarea></label>`)}
+      ${q(++n, 'What’s missing, or what would make Homelu a must-have?', `<label class="field"><span class="sr">What’s missing</span><textarea name="missing" maxlength="1500" placeholder="e.g. Reminders when milk runs out, a festival menu, …"></textarea></label>`)}
       ${q(++n, 'Was anything confusing or hard to use?', `<label class="field"><span class="sr">What was confusing</span><textarea name="confusing" maxlength="1500" placeholder="Optional"></textarea></label>`)}
-      ${q(++n, 'Would your family pay for Homzy?', radios('price', PRICE))}
-      ${q(++n, 'How likely are you to recommend Homzy to another family?', `
+      ${q(++n, 'Would your family pay for Homelu?', radios('price', PRICE))}
+      ${q(++n, 'How likely are you to recommend Homelu to another family?', `
         ${radios('recommend', Object.fromEntries(Array.from({ length: 11 }, (_, i) => [String(i), String(i)])), 'scale')}
         <div class="scale-ends"><span>Not likely</span><span>Very likely</span></div>`)}
       ${q(++n, 'About you', `
@@ -62,7 +62,7 @@ function form() {
       <label class="hp" aria-hidden="true">Website<input name="website" tabindex="-1" autocomplete="off"></label>
       <p class="note error" id="survey-err" role="alert" hidden></p>
       <button class="btn coral wide" id="send">Send my answers</button>
-      <p class="note plain center">Your answers go only to the Homzy team. We never share them.</p>
+      <p class="note plain center">Your answers go only to the Homelu team. We never share them.</p>
     </form>`;
 }
 
@@ -70,8 +70,8 @@ function page() {
   const done = store.get(DONE);
   root.innerHTML = `
     <header class="survey-head">
-      <p class="brand-mark">${I.home}<span>Homzy</span></p>
-      <h1 class="display">Help us make Homzy right for your family</h1>
+      <p class="brand-mark">${I.home}<span>Homelu</span></p>
+      <h1 class="display">Help us make Homelu right for your family</h1>
       <p class="sub">About 3 minutes · no login · every question is optional</p>
     </header>
     ${done ? `<div class="card info"><b>You already sent your answers. Thank you!</b><p>Answering for another family? Go ahead below.</p></div>` : ''}
@@ -151,14 +151,14 @@ root.addEventListener('submit', async (e) => {
 function thanks() {
   root.innerHTML = `
     <div class="setup thanks">
-      <p class="brand-mark">${I.home}<span>Homzy</span></p>
+      <p class="brand-mark">${I.home}<span>Homelu</span></p>
       <h1 class="display">Thank you!</h1>
       <p class="sub">Your answers help us decide what to build next for families like yours.</p>
       <button class="btn coral wide" id="share-survey">${I.share} Share with another family</button>
-      <a class="btn ghost wide" href="/">Open Homzy</a>
+      <a class="btn ghost wide" href="/">Open Homelu</a>
     </div>`;
   document.getElementById('share-survey').addEventListener('click', () => {
-    const text = `Could your family help shape Homzy, a home app for meals, groceries and chores? 3-minute survey: ${location.origin}/survey`;
+    const text = `Could your family help shape Homelu, a home app for meals, groceries and chores? 3-minute survey: ${location.origin}/survey`;
     if (navigator.share) navigator.share({ text }).catch(() => {});
     else window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
   });
