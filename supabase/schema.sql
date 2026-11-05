@@ -344,3 +344,24 @@ select
 from public.survey_responses;
 
 revoke all on public.survey_features, public.survey_summary from anon, authenticated;
+
+-- ---------- Dish photos (Storage) ----------
+-- One private folder per home: dish-photos/<household id>/<recipe id>.
+-- Everyone in the home can see the photos; owners and editors can add, replace and remove them.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('dish-photos', 'dish-photos', false, 400000, array['image/webp', 'image/jpeg'])
+on conflict (id) do update set public = false, file_size_limit = 400000, allowed_mime_types = array['image/webp', 'image/jpeg'];
+
+drop policy if exists dish_photos_read on storage.objects;
+create policy dish_photos_read on storage.objects for select to authenticated
+  using (bucket_id = 'dish-photos' and public.my_role(((storage.foldername(name))[1])::uuid) is not null);
+drop policy if exists dish_photos_add on storage.objects;
+create policy dish_photos_add on storage.objects for insert to authenticated
+  with check (bucket_id = 'dish-photos' and public.my_role(((storage.foldername(name))[1])::uuid) in ('owner', 'editor'));
+drop policy if exists dish_photos_change on storage.objects;
+create policy dish_photos_change on storage.objects for update to authenticated
+  using (bucket_id = 'dish-photos' and public.my_role(((storage.foldername(name))[1])::uuid) in ('owner', 'editor'))
+  with check (bucket_id = 'dish-photos' and public.my_role(((storage.foldername(name))[1])::uuid) in ('owner', 'editor'));
+drop policy if exists dish_photos_remove on storage.objects;
+create policy dish_photos_remove on storage.objects for delete to authenticated
+  using (bucket_id = 'dish-photos' and public.my_role(((storage.foldername(name))[1])::uuid) in ('owner', 'editor'));

@@ -1,6 +1,7 @@
 import * as M from './model.js';
 import { SETUP_DINNERS, QUICK_ADD } from './data.js';
-import { parseSpeech } from './parse.js';
+import { parseSpeech, understandLocal } from './parse.js';
+import { understand, fillNutrition } from './understand.js';
 import { canListen, listen, speechError } from './speech.js';
 import * as N from './nutrition.js';
 import { sendFeedback, flushOutbox } from './feedback.js';
@@ -9,7 +10,7 @@ import * as S from './sync.js';
 import * as fx from './fx.js';
 import { itemLook, dishEmoji, dishHue } from './emoji.js';
 import { wheelSvg, spinTo } from './wheel.js';
-import { dishPhoto, ownPhoto, saveOwnPhoto, removeOwnPhoto } from './photos.js';
+import { dishPhoto, ownPhoto, hasOwnPhoto, preparePhoto, keepPhoto, removeOwnPhoto, dataToBlob, syncPhotos } from './photos.js';
 import {
   $, $$, esc, rupees, plural, I, avatar, dayName, weekday, dayNum, longDate, timeAgo, fmtTime, isoOf,
   openSheet, closeSheet, toast, hideToast, runToastAction,
@@ -113,6 +114,7 @@ let shown = null;        // the screen on view now, to know when it changes
 let enterNext = false;   // play the entrance on the next redraw (Active / Bought, another week…)
 
 function render() {
+  N.useFoods(s.foods);
   const ready = s.setup && s.members.length;
   document.body.classList.toggle('setup-mode', !ready);
   document.body.classList.toggle('splash', !ready && setupStep === 0);
@@ -273,6 +275,9 @@ function wheelDishes() {
   const fits = (r) => (r.slots || 'bld').includes('d');
   const all = M.allRecipes(s).filter(fits);
   const first = [planned && M.recipe(s, planned), ...s.favs.map((id) => M.recipe(s, id)).filter((r) => r && fits(r))].filter(Boolean);
+  // The family's own plate photos first: their food looks best on the wheel.
+  const own = all.filter(hasOwnPhoto);
+  first.splice(planned ? 1 : 0, 0, ...own);
   // Then one dinner per photo we haven't shown yet, so neighbouring plates look different
   const seen = new Set(first.map(dishPhoto));
   const fresh = all.filter((r) => { const p = dishPhoto(r); if (!p || seen.has(p)) return false; seen.add(p); return true; });
@@ -408,8 +413,7 @@ function homeView() {
       : `<div class="card empty-card"><p class="empty-line">${I.check}<span>Nothing due today.</span></p><div class="chips">${TASK_IDEAS.slice(0, 3).map((x) => `<button class="chip" data-action="task-new" data-title="${esc(x)}">${I.plus}${esc(x)}</button>`).join('')}</div></div>`}
 
     ${section('This week', `<button class="link" data-action="outside-new">${I.plus} Ate outside</button>`)}
-    ${weekCard(spend, M.monthOutside(s, ym))}
-    ${feedbackPrompt()}`;
+    ${weekCard(spend, M.monthOutside(s, ym))}`;
 }
 
 function weekCard(monthGroceries, monthOut) {
@@ -682,6 +686,7 @@ function familyView() {
     </div>
 
     ${section('Help us improve')}
+    ${feedbackPrompt()}
     <div class="card stack-sm">
       <a class="menu-row" href="/survey">Take the 3-minute family survey ${I.chev}</a>
       <button class="menu-row" data-action="feedback">Send feedback or report a problem ${I.chev}</button>
@@ -797,7 +802,64 @@ function weekView() {
     <p class="note plain">Nutrition is an estimate from recipe ingredients and typical values for Indian foods. Outside meals use rough averages. It is a guide for the family, not medical advice.</p>`;
 }
 
-const VIEWS = { home: homeView, plan: planView, list: listView, week: weekView, family: familyView };
+// ----- Kitchen: speak, add home dishes, keep stock -----
+const KITCHEN_SAY = ['“2 kg rice and a litre of milk”', '“Made avial with 2 carrots, 1 coconut…”', '“Add 5 kg atta to stock”'];
+function kitchenView() {
+  const low = M.stockLow(s);
+  const ym = today().slice(0, 7);
+  const ours = M.allRecipes(s).filter((r) => !M.isBuiltIn(r.id) || s.favs.includes(r.id))
+    .sort((a, b) => hasOwnPhoto(b) - hasOwnPhoto(a));
+  return `
+    ${head('Kitchen', 'Speak, add dishes, keep stock')}
+    <button class="k-mic" data-action="speak-any">
+      <span class="k-mic-btn" aria-hidden="true">${I.mic}</span>
+      <span class="k-mic-text"><b>Tell Homzy</b><span>${KITCHEN_SAY.map(esc).join(' · ')}</span></span>
+    </button>
+    <div class="k-grid">
+      <button class="k-tile" data-action="recipe-new"><span class="k-ico">${I.camera}</span><b>Add a home dish</b><span>Photo, ingredients and nutrition</span></button>
+      <button class="k-tile" data-action="scan-stock"><span class="k-ico">${I.receipt}</span><b>Scan a bill</b><span>Fills stock and this month’s spend</span></button>
+    </div>
+
+    ${section('Stock', s.stock.length ? `<button class="link" data-action="stock">See all ${I.chev}</button>` : '')}
+    ${s.stock.length ? `
+      <button class="card stock-card" data-action="stock">
+        <span class="sc-ico">${I.jar}</span>
+        <span class="sc-text"><b>${plural(s.stock.length, 'item')} in the kitchen</b>
+          <span class="meta">${low.length ? `${low.length} running low` : 'Nothing running low'} · groceries ${rupees(M.monthSpend(s, ym))} this month</span></span>
+        ${I.chev}
+      </button>
+      ${low.length ? `<ul class="card rows low-rows">${low.slice(0, 5).map(lowRow).join('')}</ul>` : ''}`
+    : `<div class="card empty-card">
+        <p class="empty-line">${I.jar}<span>Scan this month’s grocery bill or say what you have. Homzy takes out what you cook and tells you what’s running low.</span></p>
+        <div class="chips"><button class="chip" data-action="scan-stock">${I.receipt} Scan a bill</button><button class="chip" data-action="speak-stock">${I.mic} Say it</button><button class="chip" data-action="stock">${I.plus} Type it</button></div>
+      </div>`}
+
+    ${section('Our dishes', `<button class="link" data-action="recipe-new">${I.plus} Add</button>`)}
+    ${ours.length ? `<div class="dish-strip">${ours.map((r) => `<button class="ds-dish" data-action="recipe" data-id="${r.id}">
+        ${plate(r)}${hasOwnPhoto(r) ? '' : `<span class="ds-add">${I.camera}</span>`}<b>${esc(r.name)}</b></button>`).join('')}</div>
+      <p class="note plain small">Tap a dish to add your own photo. Your photos show on the dinner wheel.</p>`
+    : `<div class="card empty-card"><p class="empty-line">${I.camera}<span>Add the dishes your family cooks, with a photo. They join the dinner wheel.</span></p></div>`}
+
+    ${section('More')}
+    <div class="card stack-sm">
+      <button class="menu-row" data-action="hub-type"><span class="mr-l">${I.keyboard}<span>Type shopping items</span></span>${I.chev}</button>
+      <button class="menu-row" data-action="spin"><span class="mr-l">${I.spin}<span>Spin for dinner</span></span>${I.chev}</button>
+      <button class="menu-row" data-action="task-new"><span class="mr-l">${I.hand}<span>Ask for a hand</span></span>${I.chev}</button>
+      <button class="menu-row" data-action="outside-new"><span class="mr-l">${I.bowl}<span>Ate outside</span></span>${I.chev}</button>
+      <button class="menu-row" data-action="bills"><span class="mr-l">${I.receipt}<span>Bills</span></span>${I.chev}</button>
+    </div>`;
+}
+
+/** A stock row that is running low, with "Add to list". */
+function lowRow(x) {
+  const listed = !!M.activeItem(s, x.name);
+  return `<li class="row">${food(x.name)}
+    <span class="row-main static"><b>${esc(x.name)}</b><span class="meta ${x.qty ? '' : 'warn'}">${x.qty ? `${esc(M.fmtQty(x.qty, x.unit))} left` : 'Used up'}</span></span>
+    ${listed ? '<span class="tag">On the list</span>' : `<button class="pill coral" data-action="stock-to-list" data-id="${x.id}">Add to list</button>`}
+  </li>`;
+}
+
+const VIEWS = { home: homeView, plan: planView, kitchen: kitchenView, list: listView, week: weekView, family: familyView };
 const TABS = Object.keys(VIEWS);
 
 // ---------- Sheets ----------
@@ -937,7 +999,10 @@ function drawCheckSheet(keepOpen) {
     ${ctx.single ? `<div class="btn-row">
       <button class="btn ghost" data-action="pick" data-date="${ctx.date}" data-slot="${ctx.slot}">Change meal</button>
       <button class="btn ghost" data-action="recipe" data-id="${M.mealAt(s, ctx.date, ctx.slot).rid}">Edit recipe</button>
-    </div>` : ''}
+    </div>
+    ${s.stock.length && ctx.date <= today() ? (M.mealAt(s, ctx.date, ctx.slot).used
+      ? `<p class="note plain center">${I.check} Cooked · taken out of stock</p>`
+      : `<button class="btn outline wide" data-action="cooked">${I.jar} Cooked it · update stock</button>`) : ''}` : ''}
     ${cta}`;
   lastSwitch = null;
   if (keepOpen && $('.sheet')) {
@@ -1125,14 +1190,22 @@ function taskSheet(id, preset = {}) {
 }
 
 // ----- Recipe editor -----
+let recipePhoto = null; // a photo picked in the recipe sheet, saved with the recipe
 function recipeSheet(id, preset = {}) {
-  const r = id ? M.recipe(s, id) : { name: preset.name || '', mins: '', slots: preset.slot || 'd', veg: true, ing: [] };
+  const r = id ? M.recipe(s, id) : { name: preset.name || '', mins: '', slots: preset.slot || 'd', veg: true, ing: preset.ing || [] };
   if (!r) return;
+  recipePhoto = null;
+  const src = id ? ownPhoto(id) || dishPhoto(r) : '';
   const pick = preset.date ? `data-date="${preset.date}" data-slot="${preset.slot}"` : '';
   openSheet(`
-    <h2 class="sheet-title big">${id ? 'Edit recipe' : 'Save a family recipe'}</h2>
+    <h2 class="sheet-title big">${id ? 'Edit recipe' : 'Add a home dish'}</h2>
     <form data-form="recipe" ${id ? `data-id="${id}"` : ''} ${pick} class="stack">
-      <label class="field">Meal name<input name="name" value="${esc(r.name)}" placeholder="Amma’s avial + rice" maxlength="60" required ${id ? '' : 'autofocus'}></label>
+      <label class="rp-photo ${src ? 'has' : ''}">
+        <span class="rp-img" id="rp-img">${src ? `<img src="${esc(src)}" alt="">` : ''}</span>
+        <span class="rp-cta">${I.camera}<b>${id && ownPhoto(id) ? 'Change photo' : 'Add a photo'}</b><span>Take one or pick from your gallery. It shows on the dinner wheel.</span></span>
+        <input type="file" accept="image/*" class="sr-only" data-recipe-photo>
+      </label>
+      <label class="field">Dish name<input name="name" value="${esc(r.name)}" placeholder="Amma’s avial + rice" maxlength="60" required ${id || r.name ? '' : 'autofocus'}></label>
       <div class="two">
         <label class="field">Cooking time<input name="mins" inputmode="numeric" value="${r.mins || ''}" placeholder="min"></label>
         <div class="field">Type<div class="chips">
@@ -1141,12 +1214,82 @@ function recipeSheet(id, preset = {}) {
         </div></div>
       </div>
       <div class="field">Good for<div class="chips">${Object.entries(SLOTS).map(([k, v]) => `<label class="chip toggle"><input type="checkbox" name="slots" value="${k}" ${r.slots.includes(k) ? 'checked' : ''}>${v}</label>`).join('')}</div></div>
-      <label class="field"><span>Ingredients for 4 people <span class="opt">one per line</span></span>
-        <textarea name="ing" rows="6" placeholder="Rice 500 g&#10;Toor dal 200 g&#10;Tomato 2 pcs">${esc(r.ing.map((x) => [x.name, x.qty, x.unit].filter((v) => v != null && v !== '').join(' ')).join('\n'))}</textarea></label>
+      <div class="field">
+        <div class="field-head"><label for="rp-ing">Ingredients for 4 people <span class="opt">one per line</span></label>
+          ${canListen ? `<button type="button" class="pill ghost ing-mic" id="ing-mic" data-action="ing-mic" aria-pressed="false">${I.mic} Speak</button>` : ''}</div>
+        <textarea name="ing" id="rp-ing" rows="6" placeholder="Rice 500 g&#10;Toor dal 200 g&#10;Tomato 2 pcs">${esc(ingText(r.ing))}</textarea>
+        <p class="hint" id="ing-heard" hidden></p>
+      </div>
+      <div id="rp-nutri" aria-live="polite"></div>
       <button class="btn coral wide">${id ? 'Save recipe' : preset.date ? 'Save and plan it' : 'Save recipe'}</button>
     </form>
     ${id ? `<button class="btn ghost wide" data-action="fav" data-id="${id}" data-close="1">${s.favs.includes(id) ? 'Remove from favourites' : 'Add to favourites'}</button>` : ''}
-    ${id && !M.isBuiltIn(id) ? `<button class="btn ghost wide danger" data-action="recipe-del" data-id="${id}">${I.trash} Delete this recipe</button>` : ''}`, { tall: true });
+    ${id && ownPhoto(id) ? `<button class="btn ghost wide" data-action="photo-del" data-id="${id}">Remove our photo</button>` : ''}
+    ${id && !M.isBuiltIn(id) ? `<button class="btn ghost wide danger" data-action="recipe-del" data-id="${id}">${I.trash} Delete this recipe</button>` : ''}`, {
+    tall: true,
+    onMount: (sh) => {
+      recipeNutri();
+      sh.addEventListener('input', (e) => { if (e.target.id === 'rp-ing') { clearTimeout(nutriTimer); nutriTimer = setTimeout(recipeNutri, 350); } });
+    },
+    onClose: () => { stopIngMic(); },
+  });
+}
+
+const ingText = (ing) => ing.map((x) => [x.name, x.qty, x.unit].filter((v) => v != null && v !== '').join(' ')).join('\n');
+const ingLines = (text) => String(text || '').split('\n').map((l) => l.trim()).filter(Boolean).map(M.parseIng);
+
+// Nutrition while typing a recipe: per person, with lookups for new ingredients.
+let nutriTimer = null;
+function recipeNutri() {
+  const box = $('#rp-nutri'), ta = $('#rp-ing');
+  if (!box || !ta) return;
+  const ing = ingLines(ta.value);
+  if (!ing.length) { box.innerHTML = ''; return; }
+  const n = N.recipeNutrition({ ing }, 4);
+  const est = ing.filter((x) => N.lookup(x.name)?.est).map((x) => x.name);
+  const missing = N.unknown(n.missing);
+  const p = n.perPerson;
+  box.innerHTML = `${n.counted ? `<div class="nut-chips" aria-label="Nutrition per person">
+      <span><b>${num0(p.kcal)}</b> kcal</span><span><b>${num0(p.protein)} g</b> protein</span>
+      <span><b>${num0(p.carbs)} g</b> carbs</span><span><b>${num0(p.fat)} g</b> fat</span><span><b>${num0(p.fibre)} g</b> fibre</span>
+    </div>` : ''}
+    <p class="hint">${n.counted ? 'Per person, estimated' : 'Add amounts (like “Rice 500 g”) to see nutrition'}${est.length ? ` · ${esc(est.join(', '))} estimated by AI` : ''}${n.missing.length ? ` · not counted: ${esc(n.missing.join(', '))}` : ''}</p>`;
+  if (missing.length && !viewOnly()) lookUpNutrition(missing).then((added) => { if (added) recipeNutri(); });
+}
+
+/** Ask the AI helper for nutrition of new ingredients and keep it for the whole home. */
+async function lookUpNutrition(names) {
+  const added = await fillNutrition(s.foods, names);
+  if (added) { M.save(s); N.useFoods(s.foods); }
+  return added;
+}
+
+// Speaking ingredients straight into the recipe sheet.
+let ingStop = null;
+function stopIngMic() { ingStop?.(); ingStop = null; }
+function ingMic() {
+  const btn = $('#ing-mic'), ta = $('#rp-ing'), heard = $('#ing-heard');
+  if (!btn || !ta) return;
+  if (ingStop) return stopIngMic();
+  const before = ta.value.trim();
+  btn.classList.add('on'); btn.setAttribute('aria-pressed', 'true'); btn.innerHTML = `${I.stop} Stop`;
+  heard.hidden = false; heard.textContent = 'Listening… say the ingredients, like “half kilo fish, 2 tomatoes, 1 coconut”';
+  ingStop = listen(s.lang, {
+    onText: (text) => { if ($('#ing-heard')) heard.textContent = text || '…'; },
+    onEnd: (text, error) => {
+      ingStop = null;
+      if (!$('#ing-mic')) return;
+      btn.classList.remove('on'); btn.setAttribute('aria-pressed', 'false'); btn.innerHTML = `${I.mic} Speak`;
+      if (!text) { heard.textContent = speechError(error || 'no-speech'); return; }
+      const said = understandLocal(text);
+      const name = $('[data-form="recipe"] [name="name"]');
+      if (said.kind === 'dish' && said.name && name && !name.value.trim()) name.value = said.name;
+      if (!said.items.length) { heard.textContent = 'Couldn’t catch any ingredients. Try again?'; return; }
+      ta.value = [before, ingText(said.items)].filter(Boolean).join('\n');
+      heard.textContent = `Added ${plural(said.items.length, 'ingredient')}. Check the amounts.`;
+      recipeNutri();
+    },
+  });
 }
 
 // ----- Bills -----
@@ -1240,20 +1383,70 @@ function settingsSheet() {
     </form>`);
 }
 
-// ---------- The + menu ----------
-function hubSheet() {
-  const tile = (action, icon, title, sub, i) => `<button class="hub-tile" data-action="${action}" style="--i:${i}"><span class="hub-ico" aria-hidden="true">${icon}</span><b>${title}</b><span>${sub}</span></button>`;
-  document.body.classList.add('hub-open');
-  openSheet(`
-    <h2 class="sheet-title big">What would you like to do?</h2>
-    <div class="hub">
-      ${tile('speak', I.mic, 'Speak', 'Say a few items at once', 0)}
-      ${tile('scan', I.receipt, 'Scan a bill', 'Save what you spent', 1)}
-      ${tile('hub-type', I.keyboard, 'Type items', 'Add to the list', 2)}
-      ${tile('spin', I.spin, 'Spin for dinner', 'Let the wheel pick', 3)}
-      ${tile('task-new', I.hand, 'Ask for a hand', 'A chore for the family', 4)}
-      ${tile('outside-new', I.bowl, 'Ate outside', 'Hotel, takeaway, tea shop', 5)}
-    </div>`, { onClose: () => document.body.classList.remove('hub-open') });
+// ---------- Kitchen stock ----------
+function stockHtml() {
+  const lowIds = new Set(M.stockLow(s).map((x) => x.id));
+  const groups = new Map();
+  for (const x of [...s.stock].sort((a, b) => a.name.localeCompare(b.name))) {
+    const g = groups.get(x.cat || 'Other') || [];
+    g.push(x); groups.set(x.cat || 'Other', g);
+  }
+  const low = s.stock.filter((x) => lowIds.has(x.id));
+  const toList = low.filter((x) => !M.activeItem(s, x.name));
+  return `
+    <h2 class="sheet-title big">Kitchen stock</h2>
+    <p class="sub">${s.stock.length ? `${plural(s.stock.length, 'item')} · ${low.length ? `${low.length} running low` : 'nothing running low'} · groceries ${rupees(M.monthSpend(s, today().slice(0, 7)))} this month` : 'Nothing yet. Scan a bill, say it, or type below.'}</p>
+    <div class="btn-row">
+      <button class="btn coral" data-action="scan-stock">${I.receipt} Scan a bill</button>
+      ${canListen ? `<button class="btn ghost" data-action="speak-stock">${I.mic} Say it</button>` : ''}
+    </div>
+    <form data-form="stock-add" class="inline-add">
+      <label class="sr-only" for="stock-text">Add to stock</label>
+      <input id="stock-text" name="text" placeholder="Add: 5 kg rice, 2 L oil, 12 eggs" autocomplete="off" enterkeyhint="done">
+      <button class="add-btn" aria-label="Add to stock">${I.plus}</button>
+    </form>
+    ${low.length ? `<div class="sec-head"><h3 class="sec">Running low</h3>${toList.length > 1 ? `<button class="link underline" data-action="stock-low-all">Add all ${toList.length} to list</button>` : ''}</div>
+      <ul class="card rows low-rows">${low.map(lowRow).join('')}</ul>` : ''}
+    ${[...groups].map(([cat, list]) => `<h3 class="sec stock-cat">${esc(cat)}</h3>
+      <ul class="card rows">${list.map((x) => `<li class="row stock-row">
+        ${food(x.name)}
+        <span class="row-main static"><b>${esc(x.name)}</b><span class="meta ${lowIds.has(x.id) ? 'warn' : ''}">${x.qty == null ? 'In stock' : x.qty ? esc(M.fmtQty(x.qty, x.unit)) + (x.unit === 'pcs' ? ' pcs' : '') : 'Used up'}</span></span>
+        <div class="stepper sm">
+          <button type="button" data-action="stock-step" data-id="${x.id}" data-d="-1" aria-label="Less ${esc(x.name)}">${I.minus}</button>
+          <button type="button" data-action="stock-step" data-id="${x.id}" data-d="1" aria-label="More ${esc(x.name)}">${I.plus}</button>
+        </div>
+        ${delBtn('stock-remove', x.id, x.name)}
+      </li>`).join('')}</ul>`).join('')}
+    <p class="note plain small">Cooked meals from the plan come out of stock on their own. You can also tap “Cooked” on a dish.</p>`;
+}
+function stockSheet(keepOpen) {
+  const sh = $('.sheet.stock-sheet');
+  if (keepOpen && sh) {
+    const y = sh.scrollTop;
+    sh.innerHTML = `<div class="grip"></div>${stockHtml()}`;
+    sh.scrollTop = y;
+    sh.classList.add('redraw');
+    return;
+  }
+  openSheet(stockHtml(), { tall: true });
+  $('.sheet')?.classList.add('stock-sheet');
+}
+const stockOpen = () => !!$('.sheet.stock-sheet');
+
+/** Put stock items on the shopping list. */
+function stockToList(list) {
+  const items = list.filter((x) => !M.activeItem(s, x.name)).map((x) => ({ name: x.name }));
+  if (!items.length) return;
+  commit(`Added ${items.map((i) => i.name).join(', ')} to the list`, () => M.addItems(s, items));
+  if (stockOpen()) stockSheet(true);
+}
+
+/** Add to stock, look up nutrition for new things, and show the stock. */
+function addToStock(lines, { open = true } = {}) {
+  if (!lines.length) return;
+  commit((n) => `Added ${plural(n, 'item')} to stock`, () => M.stockAdd(s, lines));
+  lookUpNutrition(lines.map((l) => l.name));
+  if (open) stockSheet(stockOpen());
 }
 
 
@@ -1263,7 +1456,8 @@ let spin = null; // { dishes, rot, busy, pick, date, slot }
 /** Up to 8 dishes for the wheel: favourites first, then family dishes for that meal, mixed up. */
 function spinDishes(slot) {
   const fits = (r) => (r.slots || 'bld').includes(slot);
-  const favs = s.favs.map((id) => M.recipe(s, id)).filter((r) => r && fits(r));
+  const own = M.allRecipes(s).filter((r) => fits(r) && hasOwnPhoto(r));
+  const favs = [...own, ...s.favs.map((id) => M.recipe(s, id)).filter((r) => r && fits(r))];
   const rest = M.allRecipes(s).filter(fits).sort(() => Math.random() - 0.5);
   return [...new Map([...favs, ...rest].map((r) => [r.id, r])).values()].slice(0, 8);
 }
@@ -1277,7 +1471,7 @@ function spinSheet(date = today(), slot = 'd') {
     <p class="sub">${SLOTS[slot]} for ${dayName(date).toLowerCase()} · ${s.favs.length ? 'your favourites and family dishes' : 'popular family dishes'}</p>
     <div class="wheel-wrap">
       <span class="wheel-pointer" aria-hidden="true"></span>
-      <div class="wheel" id="wheel">${wheelSvg(dishes.map((r) => ({ name: r.name, emoji: dishEmoji(r.name) })))}</div>
+      <div class="wheel" id="wheel">${wheelSvg(dishes.map((r) => ({ name: r.name, emoji: dishEmoji(r.name), photo: dishPhoto(r) })))}</div>
       <button class="wheel-hub" data-action="spin-go" aria-label="Spin the wheel">Spin</button>
     </div>
     <div id="spin-result" class="spin-result" aria-live="polite"></div>
@@ -1332,13 +1526,22 @@ let stopListening = null;
 let ignoreEnd = false;   // stopped to change language: don't open the review
 let draft = [];          // items waiting in the review sheet: { k, name, qty, unit }
 let draftCarry = false;  // "Say more" from the review sheet adds to the same draft
+let draftMode = 'list';  // where the checked items go: 'list' or 'stock'
+let speakMode = 'list';  // what the speak sheet listens for: 'list', 'any' (Kitchen) or 'stock'
+const SPEAK_TITLE = { list: 'What do we need?', any: 'Tell Homzy', stock: 'What’s in the kitchen?' };
+const SPEAK_EXAMPLES = {
+  list: null,
+  any: ['“2 kg rice, 1 litre milk and 6 eggs”', '“Made fish curry with half kilo fish, 2 tomatoes”', '“Add 5 kg atta and 2 litre oil to stock”'],
+  stock: ['“5 kg rice, 2 litre coconut oil, 12 eggs”', '“anchu kilo ari, randu litre enna”', '“paanch kilo aata, do litre tel”'],
+};
 const UNITS = ['', 'kg', 'g', 'L', 'ml', 'pcs', 'pkt', 'dozen', 'bottle'];
 const EXAMPLES = ['“2 kg rice, 1 litre milk and 6 eggs”', '“do kilo chawal aur ek litre doodh”', '“randu kilo ari, oru litre paal”'];
 
-function speakSheet(more = false) {
+function speakSheet(more = false, mode = 'list') {
   draftCarry = more;
+  speakMode = mode;
   openSheet(`
-    <h2 class="sheet-title big center">${more ? 'Say more items' : 'What do we need?'}</h2>
+    <h2 class="sheet-title big center">${more ? 'Say more items' : SPEAK_TITLE[mode]}</h2>
     ${canListen ? `
       <div class="mic-wrap">
         <button class="mic" id="mic" aria-pressed="false" aria-label="Start listening">${I.mic}</button>
@@ -1347,12 +1550,12 @@ function speakSheet(more = false) {
       </div>
       <p class="heard" id="heard">Say several things at once, the way you would at home.</p>
       <div class="chips center heard-items" id="heard-items" aria-label="Items heard so far"></div>
-      <ul class="examples">${EXAMPLES.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      <ul class="examples">${(SPEAK_EXAMPLES[mode] || EXAMPLES).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
       <div class="chips center" role="group" aria-label="Voice language">${Object.entries(LANGS).map(([k, v]) => `<button class="chip ${s.lang === k ? 'on' : ''}" data-action="lang" data-lang="${k}" aria-pressed="${s.lang === k}">${v}</button>`).join('')}</div>`
     : `<p class="note">Voice isn’t available in this browser. Type below, or use your keyboard’s mic. You can type several items at once.</p>`}
     <form class="inline-add" data-form="speak-type">
       <label class="sr-only" for="speak-text">Type items</label>
-      <input id="speak-text" name="text" placeholder="Or type: milk, 2 kg rice, eggs" autocomplete="off" enterkeyhint="go" ${canListen ? '' : 'autofocus'}>
+      <input id="speak-text" name="text" placeholder="${mode === 'any' ? 'Or type it here' : 'Or type: milk, 2 kg rice, eggs'}" autocomplete="off" enterkeyhint="go" ${canListen ? '' : 'autofocus'}>
       <button class="add-btn" aria-label="Check these items">${I.chev}</button>
     </form>`, {
     onMount: () => { if (canListen) startListening(); },
@@ -1390,14 +1593,36 @@ function startListening() {
       stopListening = null;
       if (ignoreEnd || !$('#mic')) { ignoreEnd = false; micState(false); return; }
       micState(false);
-      if (text) return reviewItems(text);
+      if (text) return handleSaid(text);
       heard.textContent = speechError(error || 'no-speech');
     },
   });
 }
 
-/** Turn spoken or typed text into items and show them for a quick check. */
-function reviewItems(text) {
+/** What was said in the speak sheet: shopping items, a new dish, or stock. */
+async function handleSaid(text) {
+  const mode = speakMode;
+  if (mode === 'list') return reviewItems(text);
+  const h = $('#heard');
+  if (h) h.textContent = 'Understanding…';
+  const said = await understand(text, s.lang, mode === 'stock' ? 'stock' : null);
+  if (said.kind === 'dish') return recipeSheet(null, { name: said.name, ing: said.items });
+  if (!said.items.length) {
+    if ($('#heard')) $('#heard').textContent = 'Couldn’t catch that. Try again?'; else toast('Couldn’t understand that. Try again?');
+    return;
+  }
+  reviewItems(null, said.items, said.kind === 'stock' ? 'stock' : 'list');
+}
+
+/** Turn spoken or typed text (or already-understood items) into a list to check before adding. */
+function reviewItems(text, parsedItems = null, mode = 'list') {
+  if (!draftCarry) draftMode = mode;
+  if (parsedItems) {
+    const found = parsedItems.map((x) => ({ k: M.uid(), name: x.name, qty: x.qty ?? null, unit: x.unit ?? null }));
+    draft = draftCarry ? [...draft, ...found] : found;
+    draftCarry = false;
+    return draftSheet();
+  }
   const parsed = parseSpeech(text);
   if (!parsed.length) {
     const h = $('#heard');
@@ -1412,7 +1637,7 @@ function reviewItems(text) {
 
 function draftSheet() {
   openSheet(`
-    <h2 class="sheet-title big">Check before adding</h2>
+    <h2 class="sheet-title big">${draftMode === 'stock' ? 'Check before adding to stock' : 'Check before adding'}</h2>
     <p class="sub" id="draft-sub"></p>
     <ul class="draft" id="draft-list"></ul>
     <div class="draft-tools">
@@ -1459,7 +1684,7 @@ function updateDraftButton() {
   const b = $('#draft-add');
   if (b) {
     b.disabled = !ready.length;
-    b.textContent = !ready.length ? 'Nothing to add' : ready.length === 1 ? `Add ${ready[0].name.trim()}` : `Add all ${ready.length}`;
+    b.textContent = !ready.length ? 'Nothing to add' : ready.length === 1 ? `Add ${ready[0].name.trim()}${draftMode === 'stock' ? ' to stock' : ''}` : `Add all ${ready.length}${draftMode === 'stock' ? ' to stock' : ''}`;
   }
   const sub = $('#draft-sub');
   if (sub) sub.textContent = ready.length ? `${plural(ready.length, 'item')} found. Fix or remove any before adding.` : '';
@@ -1484,6 +1709,7 @@ function addDraft() {
   if (!items.length) return;
   closeSheet();
   draft = [];
+  if (draftMode === 'stock') return addToStock(items);
   addParsed(items);
 }
 
@@ -1566,9 +1792,10 @@ function reviewSheet({ items, total, shop }) {
         <label class="field">Shop<input name="shop" value="${esc(shop)}" placeholder="Shop name" maxlength="40"></label>
         <label class="field">Total ₹<input name="total" inputmode="decimal" value="${total ?? ''}" placeholder="0"></label>
       </div>
+      <label class="switch-row"><input type="checkbox" name="stock" value="1" checked><span><b>Add to kitchen stock</b><span class="meta">Ticked groceries go into stock${review.some((x) => x.qty) ? ', with pack sizes' : ''}</span></span></label>
       ${review.length ? `<ul class="rows bill-lines">${review.map((x) => `<li><label class="row check-row">
         <input type="checkbox" data-review="${x.id}" ${x.on ? 'checked' : ''}>
-        <span class="row-main static"><b>${esc(x.name)}</b>${x.listed ? '<span class="meta on-list">On your list</span>' : ''}</span>
+        <span class="row-main static"><b>${esc(x.name)}</b>${[x.qty ? `<span class="meta">${esc(M.fmtQty(x.qty, x.unit))}</span>` : '', x.listed ? '<span class="meta on-list">On your list</span>' : ''].join('')}</span>
         <span class="amount">${x.price != null ? rupees(x.price) : ''}</span></label>
         ${x.known ? nutriChips({ name: x.name }) : ''}</li>`).join('')}</ul>`
       : '<p class="note">No items could be read clearly. You can still save the total.</p>'}
@@ -1581,7 +1808,7 @@ function reviewSheet({ items, total, shop }) {
 // joins by scanning a QR code made for them on the Family tab.
 const VIEW_OK = new Set(['tab', 'close-sheet', 'toast-action', 'switch', 'be', 'lang', 'step', 'list-mode', 'item', 'task', 'meal',
   'check-week', 'recipe', 'bills', 'week-prev', 'week-next', 'feedback', 'fb-snooze', 'settings', 'backup', 'install',
-  'wheel-step', 'wheel-to', 'wheel-spin', 'planned-list', 'planned-home']);
+  'wheel-step', 'wheel-to', 'wheel-spin', 'planned-list', 'planned-home', 'stock', 'hub']);
 const VIEW_FORMS = new Set(['feedback', 'settings']);
 const viewOnlyToast = () => toast('You can view this home but not change it. Ask the owner for edit access.');
 const ROLE = { owner: 'Owner', editor: 'Can edit', viewer: 'View only' };
@@ -1615,6 +1842,7 @@ function startSync() {
       M.save(s, { quiet: true });
       dropUndo();
       softRender();
+      syncDishPhotos();
     },
     onStatus: showSyncStatus,
     onRoleChange: (role) => {
@@ -1628,7 +1856,8 @@ function startSync() {
         <button class="btn coral wide" data-action="close-sheet">OK</button>`);
     },
   });
-  C.config().then((cfg) => { if (cfg) softRender(); handleLinks(); });
+  C.config().then((cfg) => { if (cfg) { softRender(); syncDishPhotos(); } handleLinks(); });
+  window.addEventListener('online', () => syncDishPhotos());
 }
 
 // A change from another phone shouldn't wipe out what you're typing.
@@ -1856,6 +2085,7 @@ async function loadHome(info) {
   tab = 'home'; setPref('tab', tab);
   closeSheet();
   render();
+  syncDishPhotos();
   if (!known) whoAmISheet();
   else toast(`Welcome to ${s.home.name}, ${me().name}`);
 }
@@ -2087,7 +2317,22 @@ const ACTIONS = {
   'toast-action': () => runToastAction(),
   scan: () => { closeSheet(); photo.click(); },
   speak: () => speakSheet(),
-  hub: () => hubSheet(),
+  hub: () => ACTIONS.tab({ dataset: { tab: 'kitchen' } }),
+  'speak-any': () => speakSheet(false, 'any'),
+  'speak-stock': () => speakSheet(false, 'stock'),
+  'scan-stock': () => { closeSheet(); photo.click(); },
+  stock: () => stockSheet(),
+  'stock-step': (el) => { M.stockStep(s, el.dataset.id, +el.dataset.d); persist(); stockSheet(true); },
+  'stock-remove': (el) => removeWithUndo('stock', el.dataset.id, () => { if (stockOpen()) stockSheet(true); }),
+  'stock-to-list': (el) => { const x = s.stock.find((y) => y.id === el.dataset.id); if (x) stockToList([x]); },
+  'stock-low-all': () => stockToList(M.stockLow(s)),
+  'ing-mic': () => ingMic(),
+  'photo-del': (el) => { closeSheet(); clearDishPhoto(el.dataset.id); toast('Photo removed'); },
+  cooked: () => {
+    const { date, slot } = checkCtx;
+    commit((used) => used?.length ? `Took ${used.join(', ')} out of stock` : 'Marked cooked', () => M.cookMeal(s, date, slot));
+    drawCheckSheet(true);
+  },
   'hub-type': () => {
     closeSheet();
     listMode = 'active';
@@ -2415,7 +2660,7 @@ const FORMS = {
     addParsed(parsed);
     setTimeout(() => $('[data-form="list-add"] input')?.focus(), 30);
   },
-  'speak-type': (f, d) => { if (d.text.trim()) reviewItems(d.text); },
+  'speak-type': (f, d) => { if (d.text.trim()) handleSaid(d.text); },
   buy: (f, d) => {
     const i = byId(s.items, f.dataset.id);
     if (!i) return;
@@ -2437,8 +2682,16 @@ const FORMS = {
     if (f.dataset.id) commit('Task updated', () => M.updateTask(s, f.dataset.id, data));
     else commit(!data.assignee ? 'Shared with everyone' : data.assignee === s.me ? 'Added to your day' : `Request sent to ${M.firstName(s, data.assignee)}`, () => M.addTask(s, data));
   },
+  'stock-add': (f, d) => {
+    const items = parseSpeech(d.text || '');
+    if (!items.length) return;
+    f.text.value = '';
+    addToStock(items.map(({ name, qty, unit, cat }) => ({ name, qty, unit, cat })));
+    setTimeout(() => $('#stock-text')?.focus(), 60);
+  },
   recipe: (f, d) => {
-    const ing = String(d.ing || '').split('\n').map((l) => l.trim()).filter(Boolean).map(M.parseIng);
+    stopIngMic();
+    const ing = ingLines(d.ing);
     const slots = new FormData(f).getAll('slots').join('') || 'd';
     const data = { name: d.name.trim(), mins: num(d.mins), veg: d.veg !== '0', slots, ing };
     if (!data.name) return;
@@ -2448,6 +2701,10 @@ const FORMS = {
       r = M.saveRecipe(s, data, f.dataset.id);
       if (date) M.setMeal(s, date, slot, r.id);
     });
+    const photoData = recipePhoto;
+    recipePhoto = null;
+    if (photoData && r) setDishPhoto(r.id, photoData);
+    lookUpNutrition(ing.map((x) => x.name));
     if (date) mealSheet(date, slot); else closeSheet();
   },
   outside: (f, d) => {
@@ -2471,7 +2728,8 @@ const FORMS = {
     toast(result === 'sent' ? 'Thank you! Your feedback reached us.' : 'Saved. It will send when you’re online.');
   },
   review: (f, d) => {
-    const lines = (review || []).filter((x) => x.on).map(({ name, cat, price }) => ({ name, cat, price }));
+    const lines = (review || []).filter((x) => x.on).map(({ name, cat, price, qty, unit }) => ({ name, cat, price, qty, unit }));
+    const toStock = d.stock === '1';
     const total = num(d.total);
     if (d.type === 'outside') {
       if (!(total > 0)) { f.total.focus(); return; }
@@ -2479,9 +2737,10 @@ const FORMS = {
       return outsideSheet({ amount: total, place: d.shop.trim() });
     }
     closeSheet();
-    commit((n) => `${n ? `${plural(n, 'item')} marked bought · ` : ''}${total ? rupees(total) + ' bill saved' : 'Saved'}`,
-      () => M.saveBill(s, { shop: d.shop.trim(), total, lines }));
+    commit((n) => `${n ? `${plural(n, 'item')} marked bought · ` : ''}${total ? rupees(total) + ' bill saved' : 'Saved'}${toStock && lines.length ? ' · stock updated' : ''}`,
+      () => M.saveBill(s, { shop: d.shop.trim(), total, lines, toStock }));
     review = null;
+    if (toStock && lines.length) { lookUpNutrition(lines.map((l) => l.name)); stockSheet(); }
   },
   bill: (f, d) => {
     const total = num(d.total);
@@ -2527,19 +2786,82 @@ $('#restore').addEventListener('change', async (e) => {
 
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !closePlanned()) closeSheet(); });
 
-// "Add your photo" on a dish: the family's own plate replaces the stock photo on this phone.
+// ---------- Dish photos ----------
+// A family's own plate replaces the stock photo. In a shared home it is uploaded so
+// every phone shows it; otherwise it stays on this phone.
+const PENDING = 'photo-pending'; // dishes whose photo still has to be uploaded
+const pendingPhotos = () => pref(PENDING, '').split(',').filter(Boolean);
+const setPending = (ids) => setPref(PENDING, [...new Set(ids)].join(','));
+
+async function setDishPhoto(rid, data, { retry = false } = {}) {
+  if (!retry) {
+    keepPhoto(rid, data);
+    wheel = null; // rebuild the dinner wheel so the new photo is on it
+    render();
+  }
+  const L = S.linked();
+  if (!L || viewOnly()) return;
+  try {
+    await C.uploadPhoto(L.hid, rid, dataToBlob(data));
+    const v = Date.now();
+    keepPhoto(rid, data, v);
+    setPending(pendingPhotos().filter((x) => x !== rid));
+    if (M.recipe(s, rid)) { M.saveRecipe(s, { photo: { v } }, rid); persist(); }
+  } catch {
+    setPending([...pendingPhotos(), rid]);
+    if (!retry) toast('Photo saved on this phone. It will be shared with your family when you’re online.');
+  }
+}
+
+function clearDishPhoto(rid) {
+  removeOwnPhoto(rid);
+  wheel = null;
+  setPending(pendingPhotos().filter((x) => x !== rid));
+  const r = M.recipe(s, rid);
+  const L = S.linked();
+  if (r?.photo && L && !viewOnly()) {
+    M.saveRecipe(s, { photo: null }, rid);
+    C.deletePhoto(L.hid, rid).catch(() => {});
+  }
+  persist();
+  if (checkCtx?.single && $('.dish-sheet')) drawCheckSheet(true);
+}
+
+/** Upload photos that couldn't be shared earlier, and fetch the family's new ones. */
+let photoSyncing = false;
+async function syncDishPhotos() {
+  const L = S.linked();
+  if (!L || photoSyncing || !navigator.onLine) return;
+  photoSyncing = true;
+  try {
+    if (!viewOnly()) for (const rid of pendingPhotos()) { const d = ownPhoto(rid); if (d) await setDishPhoto(rid, d, { retry: true }); else setPending(pendingPhotos().filter((x) => x !== rid)); }
+    if (await syncPhotos(M.allRecipes(s), (rid) => C.downloadPhoto(L.hid, rid))) softRender();
+  } finally {
+    photoSyncing = false;
+  }
+}
+
 document.addEventListener('change', async (e) => {
   const rid = e.target.dataset?.photoFor;
+  const inRecipe = e.target.matches?.('[data-recipe-photo]');
   const file = e.target.files?.[0];
-  if (!rid || !file) return;
+  if ((!rid && !inRecipe) || !file) return;
   e.target.value = '';
+  let data;
   try {
-    await saveOwnPhoto(rid, file);
-    toast('Photo saved for this dish', { label: 'Undo', run: () => { removeOwnPhoto(rid); render(); if (checkCtx?.single) drawCheckSheet(true); } });
+    data = await preparePhoto(file);
   } catch {
     return toast('Couldn’t use that photo. Try another one.');
   }
-  render();
+  if (inRecipe) {
+    // Shown now, saved with the recipe.
+    recipePhoto = data;
+    const box = $('#rp-img');
+    if (box) { box.innerHTML = `<img src="${data}" alt="">`; const lab = box.closest('.rp-photo'); lab?.classList.add('has'); const b = lab?.querySelector('.rp-cta b'); if (b) b.textContent = 'Change photo'; }
+    return;
+  }
+  await setDishPhoto(rid, data);
+  toast('Photo saved for this dish', { label: 'Undo', run: () => clearDishPhoto(rid) });
   if (checkCtx?.single && $('.dish-sheet')) drawCheckSheet(true);
 });
 
@@ -2564,10 +2886,15 @@ ACTIONS.install = async () => {
 };
 window.addEventListener('appinstalled', () => { document.body.classList.remove('can-install'); toast('Homzy is on your home screen'); });
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { render(); flushOutbox(); } });
+/** Planned meals that have happened come out of stock (on phones that can edit). */
+function useCooked() {
+  if (s.setup && !viewOnly() && M.useCookedMeals(s)) M.save(s);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { useCooked(); render(); flushOutbox(); syncDishPhotos(); } });
 
 applyTheme();
 if (!pref('first-seen', '')) setPref('first-seen', String(Date.now()));
+useCooked();
 render();
 flushOutbox();
 startSync();
@@ -2576,6 +2903,7 @@ startSync();
 const shortcut = new URLSearchParams(location.search).get('do');
 if (shortcut && s.setup) {
   history.replaceState(null, '', location.pathname);
-  if (shortcut === 'speak') speakSheet();
-  if (shortcut === 'scan') openSheet(`<h2 class="sheet-title big">Scan a bill</h2><button class="btn coral wide" data-action="scan">${I.camera} Take or choose a photo</button>`);
+  tab = 'kitchen'; setPref('tab', tab); render();
+  if (shortcut === 'speak') speakSheet(false, 'any');
+  if (shortcut === 'scan') openSheet(`<h2 class="sheet-title big">Scan a bill</h2><button class="btn coral wide" data-action="scan-stock">${I.camera} Take or choose a photo</button>`);
 }

@@ -6,7 +6,8 @@
   "functions": {
     "api/feedback.js": { "memory": 128, "maxDuration": 10 },
     "api/config.js": { "memory": 128, "maxDuration": 5 },
-    "api/survey.js": { "memory": 128, "maxDuration": 10 }
+    "api/survey.js": { "memory": 128, "maxDuration": 10 },
+    "api/understand.js": { "memory": 128, "maxDuration": 12 }
   },
   "headers": [
     {

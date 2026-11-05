@@ -7,6 +7,7 @@ const users = new Map();     // email or id → { id, email }
 const households = new Map(); // id → { id, name, data, rev }
 const members = [];          // { household_id, user_id, role, member_id, email, joined_at }
 const invites = new Map();   // code → { code, household_id, role, member_id, expires_at, used_at, created_at }
+const photos = new Map();    // 'dish-photos/<hid>/<rid>' → { type, buf }
 const CODE = '123456';
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
@@ -87,9 +88,9 @@ const RPC = {
 };
 
 /** Handles a request under /__mock_supabase. Returns true if it answered. */
-export function mockSupabase(req, res, url, raw) {
+export function mockSupabase(req, res, url, raw, buf) {
   const path = url.pathname.replace(/^\/__mock_supabase/, '');
-  const body = raw ? JSON.parse(raw) : {};
+  const body = raw && !path.startsWith('/storage/') ? JSON.parse(raw) : {};
   const send = (status, obj) => {
     res.statusCode = status;
     if (obj === undefined) return res.end();
@@ -122,6 +123,25 @@ export function mockSupabase(req, res, url, raw) {
     if (path === '/auth/v1/logout') return send(204);
     if (!me) return send(401, { message: 'JWT expired', code: 'PGRST301' });
     if (path === '/auth/v1/user') return send(200, me);
+
+    // Storage: dish photos, one folder per home (mirrors the storage policies in schema.sql).
+    if (path.startsWith('/storage/v1/object/')) {
+      const key = decodeURIComponent(path.slice('/storage/v1/object/'.length)).replace(/^authenticated\//, '');
+      const [bucket, hid] = key.split('/');
+      const role = roleIn(me.id, hid);
+      if (bucket !== 'dish-photos' || !role) return send(403, { message: 'not allowed' });
+      if (req.method === 'GET') {
+        const p = photos.get(key);
+        if (!p) return send(404, { message: 'Object not found' });
+        res.setHeader('Content-Type', p.type);
+        return res.end(p.buf);
+      }
+      if (role === 'viewer') return send(403, { message: 'not allowed' });
+      if (req.method === 'DELETE') { photos.delete(key); return send(200, []); }
+      photos.set(key, { type: req.headers['content-type'] || 'image/webp', buf });
+      console.log(`[mock supabase] photo saved ${key} (${buf.length} bytes)`);
+      return send(200, { Key: key });
+    }
 
     if (path.startsWith('/rest/v1/rpc/')) {
       const fn = RPC[path.slice('/rest/v1/rpc/'.length)];

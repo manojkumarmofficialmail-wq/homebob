@@ -155,15 +155,43 @@ const FATS = new Set(['oil', 'coconut oil', 'sunflower oil', 'gingelly oil', 'mu
 const zero = () => ({ kcal: 0, protein: 0, carbs: 0, fat: 0, fibre: 0 });
 const addInto = (a, b, f = 1) => { for (const n of NUTRIENTS) a[n.k] += (b[n.k] || 0) * f; return a; };
 
-/** Nutrition row for an ingredient name, or null if unknown. */
+// Ingredients the home added that aren't in the table above (s.foods), set by the app.
+let EXTRA = {};
+/** Use this home's extra foods: { key: { v: [kcal, protein, carbs, fat, fibre, gPiece, gPacket, density], est } }. */
+export function useFoods(foods) { EXTRA = foods && typeof foods === 'object' ? foods : {}; }
+export const foodKey = (name) => key(name).replace(/\s+/g, ' ');
+
+/** Nutrition row for an ingredient name, or null if unknown. est is true for looked-up estimates. */
 export function lookup(name) {
-  const k = key(name).replace(/\s+/g, ' ');
+  const k = foodKey(name);
+  if (EXTRA[k] && !EXTRA[k].est) return { name: k, v: EXTRA[k].v, own: true }; // the family's own numbers win
   if (T[k]) return { name: k, v: T[k] };
   const singular = k.replace(/(es|s)$/, '');
   if (T[singular]) return { name: singular, v: T[singular] };
+  if (EXTRA[k]) return { name: k, v: EXTRA[k].v, est: true };
   const cat = matchCatalog(name);
   const ck = cat && key(cat.name);
   return ck && T[ck] ? { name: ck, v: T[ck] } : null;
+}
+
+/** Names with no nutrition known yet, without repeats. */
+export function unknown(names) {
+  const out = new Map();
+  for (const n of names) if (n && !out.has(foodKey(n)) && !lookup(n)) out.set(foodKey(n), n);
+  return [...out.values()];
+}
+
+/** A nutrition row from outside (AI or a person) made safe, or null if it makes no sense. */
+export function cleanRow(v) {
+  if (!Array.isArray(v) || v.length < 5) return null;
+  const n = (x, max) => (x == null || x === '' ? null : Number.isFinite(+x) && +x >= 0 && +x <= max ? Math.round(+x * 10) / 10 : NaN);
+  const [kcal, protein, carbs, fat, fibre] = [n(v[0], 900), n(v[1], 100), n(v[2], 100), n(v[3], 100), n(v[4], 100)];
+  if ([kcal, protein, carbs, fat, fibre].some((x) => x == null || Number.isNaN(x))) return null;
+  if (protein + carbs + fat + fibre > 105) return null;
+  const extra = [n(v[5], 5000), n(v[6], 10000), n(v[7], 3)].map((x) => (Number.isNaN(x) || !x ? null : x));
+  const row = [kcal, protein, carbs, fat, fibre, ...extra];
+  while (row.length > 5 && row[row.length - 1] == null) row.pop();
+  return row;
 }
 
 /** Edible grams for a quantity, or null when the unit can't be turned into weight. */
