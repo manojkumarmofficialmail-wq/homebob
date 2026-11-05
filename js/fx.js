@@ -15,6 +15,42 @@ export function haptic(kind = 'tap') {
   try { navigator.vibrate?.(BUZZ[kind] ?? BUZZ.tap); } catch { /* not allowed here */ }
 }
 
+// ---------- Touch layer ----------
+// Every tap on a button, link or form control: a ripple right where the finger landed
+// and a short buzz. Buttons also press in (CSS, in css/homzy-motion.css).
+const TAPPABLE = 'button, a, label, input, select, summary, [role="switch"]';
+let taps = [];
+document.addEventListener('pointerdown', (e) => {
+  if (e.button > 0 || !e.target.closest?.(TAPPABLE) || e.target.closest('[disabled]')) return;
+  haptic('tap');
+  const layer = document.getElementById('taps');
+  if (!layer || reduced()) return;
+  const spot = document.createElement('span');
+  spot.className = 'tap-spot';
+  spot.style.left = `${e.clientX}px`;
+  spot.style.top = `${e.clientY}px`;
+  spot.innerHTML = '<span class="hz-tapring"></span><span class="hz-tapdot"></span>';
+  layer.append(spot);
+  taps.push(spot);
+  if (taps.length > 3) taps.shift().remove();
+  setTimeout(() => { spot.remove(); taps = taps.filter((x) => x !== spot); }, 650);
+}, { passive: true });
+
+/** A number that counts up to its value (the money total, the week's calories). */
+export function countUp(el, to, { ms = 1100, format = (n) => Math.round(n).toLocaleString('en-IN') } = {}) {
+  if (!el) return;
+  if (reduced() || !(to > 0)) { el.textContent = format(to || 0); return; }
+  const start = performance.now();
+  const step = (now) => {
+    if (!el.isConnected) return;
+    const k = Math.min(1, (now - start) / ms);
+    el.textContent = format(to * (1 - Math.pow(1 - k, 3)));
+    if (k < 1) requestAnimationFrame(step);
+  };
+  el.textContent = format(0);
+  requestAnimationFrame(step);
+}
+
 // ---------- Screen entrance ----------
 let enterTimer;
 /** Cards rise in one after another. Used on a tab change, not on every redraw. */
@@ -64,9 +100,10 @@ export async function animateOut(row, kind = 'delete') {
   if (reduced() || !row.isConnected) return;
   row.classList.add('leaving');
   if (kind === 'done') {
+    // The tick fills and the name is struck through, then the row slides off to the right.
     row.classList.add('is-done');
-    await wait(200);
-    await run(row, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(24px)' }], { duration: 160, easing: 'ease-in' });
+    await wait(260);
+    await run(row, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(115%) rotate(4deg)' }], { duration: 420, easing: 'cubic-bezier(.6,0,.4,1)' });
   } else if (!row.classList.contains('swiped')) {
     const from = getComputedStyle(row).transform; // part-way through a swipe, start from there
     await run(row, [{ opacity: 1, transform: from === 'none' ? 'none' : from }, { opacity: 0, transform: 'translateX(-60%)' }], { duration: 180, easing: 'ease-in' });

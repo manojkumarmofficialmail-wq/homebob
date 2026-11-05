@@ -1,8 +1,8 @@
 // Homzy service worker: works offline after the first visit.
 // Bump VERSION whenever app files change so phones pick up the update.
-const VERSION = 'homzy-v13';
+const VERSION = 'homzy-v14';
 const SHELL = [
-  './', 'index.html', 'styles.css', 'manifest.webmanifest',
+  './', 'index.html', 'styles.css', 'css/homzy-motion.css', 'manifest.webmanifest',
   'js/app.js', 'js/model.js', 'js/ui.js', 'js/data.js', 'js/parse.js', 'js/speech.js', 'js/scan.js',
   'js/nutrition.js', 'js/feedback.js', 'js/cloud.js', 'js/sync.js', 'js/fx.js', 'js/emoji.js', 'js/wheel.js', 'js/photos.js', 'js/understand.js', 'js/money.js', 'js/vendor/qrcode.js',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
