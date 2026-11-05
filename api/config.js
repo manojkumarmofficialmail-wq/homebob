@@ -5,6 +5,7 @@
 // Env vars:
 //   SUPABASE_URL               https://<project>.supabase.co
 //   SUPABASE_PUBLISHABLE_KEY   publishable key (sb_publishable_…) or legacy anon key
+//   VAPID_PUBLIC_KEY           optional: turns on phone reminders (see api/remind.js)
 
 /** Returns the key only if it is safe to show in a browser. Exported for tests. */
 export function publicKey(key) {
@@ -29,6 +30,8 @@ export default function handler(req, res) {
   const raw = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
   const key = publicKey(raw);
   if (raw && !key) console.error('SUPABASE_PUBLISHABLE_KEY looks like a secret key. Family sync is off until it is replaced with the publishable key.');
-  if (!url || !key) return res.status(200).json({ sync: false });
-  return res.status(200).json({ sync: true, url, key });
+  // The VAPID public key lets phones sign up for reminders (it is meant to be public).
+  const push = process.env.VAPID_PUBLIC_KEY || null;
+  if (!url || !key) return res.status(200).json({ sync: false, push: null });
+  return res.status(200).json({ sync: true, url, key, push });
 }

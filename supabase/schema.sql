@@ -365,3 +365,41 @@ create policy dish_photos_change on storage.objects for update to authenticated
 drop policy if exists dish_photos_remove on storage.objects;
 create policy dish_photos_remove on storage.objects for delete to authenticated
   using (bucket_id = 'dish-photos' and public.my_role(((storage.foldername(name))[1])::uuid) in ('owner', 'editor'));
+
+-- ---------- Phone notifications (v2.0) ----------
+-- One row per phone that turned on reminders. Phones never read this table: they save
+-- themselves with save_push(), and the daily reminder job (/api/remind) reads it with the secret key.
+create table if not exists public.push_subscriptions (
+  endpoint     text primary key check (endpoint like 'https://%' and char_length(endpoint) < 1000),
+  household_id uuid not null references public.households (id) on delete cascade,
+  user_id      uuid not null references auth.users (id) on delete cascade,
+  member_id    text check (char_length(member_id) <= 40),
+  p256dh       text not null check (char_length(p256dh) < 200),
+  auth         text not null check (char_length(auth) < 100),
+  created_at   timestamptz not null default now()
+);
+create index if not exists push_subscriptions_household_idx on public.push_subscriptions (household_id);
+alter table public.push_subscriptions enable row level security;
+revoke all on public.push_subscriptions from anon, authenticated;
+
+-- This phone wants the daily reminder for its home.
+create or replace function public.save_push(p_endpoint text, p_p256dh text, p_auth text, p_member_id text) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_hid uuid;
+begin
+  select household_id into v_hid from public.household_members where user_id = auth.uid();
+  if v_hid is null then raise exception 'not_in_household'; end if;
+  insert into public.push_subscriptions (endpoint, household_id, user_id, member_id, p256dh, auth)
+  values (p_endpoint, v_hid, auth.uid(), left(p_member_id, 40), p_p256dh, p_auth)
+  on conflict (endpoint) do update set household_id = excluded.household_id, user_id = excluded.user_id,
+    member_id = excluded.member_id, p256dh = excluded.p256dh, auth = excluded.auth;
+end $$;
+
+-- This phone turned reminders off.
+create or replace function public.delete_push(p_endpoint text) returns void
+language sql security definer set search_path = public as $$
+  delete from public.push_subscriptions where endpoint = p_endpoint and user_id = auth.uid()
+$$;
+
+revoke execute on function public.save_push(text, text, text, text), public.delete_push(text) from public, anon;
+grant execute on function public.save_push(text, text, text, text), public.delete_push(text) to authenticated;

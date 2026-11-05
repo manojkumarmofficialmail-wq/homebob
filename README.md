@@ -5,6 +5,13 @@ Meal plans, one shared shopping list, chores, weekly family nutrition and food s
 - **Household data** (lists, meals, bills, outside food) is kept on the phone, in `localStorage`, and works offline.
 - **Family sync** (optional, no email or password): under Family (tap your picture at the top), the owner taps **Connect** next to a family member and a QR code appears. That person scans it with their phone camera and their phone joins the home as **Can edit** or **View only**. Phones sync through Supabase every ~15 seconds while open, and merge changes made at the same time.
 - **Kitchen tab** (the round button in the middle of the tab bar): a big mic ("Tell Homzy") that understands shopping items, a new home dish, or stock; adding home dishes with a photo and live nutrition; and the kitchen **stock**, filled from scanned bills, used up by cooked meals, with "running low" items one tap from the list.
+- **Money tab**: this month's spend in one place (groceries, eating out, daily help, bills).
+  - **Daily help & deliveries** (milk, maid, newspaper, cook, water can): they're counted as coming on their usual days; tap a day to mark "didn't come" or "double". Homzy works out the month's amount.
+  - **Bills & renewals** (electricity, gas, recharge, rent, school fees, EMIs): due dates, reminders, and the next date set automatically when paid. Gas learns how long a cylinder lasts.
+  - **Pay with UPI**: opens Google Pay / PhonePe / Paytm / BHIM with the UPI ID and amount filled in (or a QR code on a computer). Homzy never handles money; it asks "did it go through?" when you come back, or you mark cash.
+- **Today card** on Home: only when something needs a tap (did the milk come, a bill due, gas to book).
+- **Order groceries** (List tab → Order): send the list to your kirana on WhatsApp in one tap, share it, or copy it and open Blinkit / Instamart / Zepto / BigBasket.
+- **Morning reminders** (optional): one phone notification a day when something is due, sent by `/api/remind` (a Vercel cron).
 - **Feedback** goes to `/api/feedback`, a Vercel function that saves it in Supabase.
 - **Family survey** at `/survey`: a short tour of the features and 12 quick questions. No login; answers go to Supabase through `/api/survey`.
 
@@ -16,6 +23,8 @@ Meal plans, one shared shopping list, chores, weekly family nutrition and food s
 | `js/fx.js`, `js/emoji.js`, `js/wheel.js` | Motion helpers, food emoji for items and dishes, and the spinner sheet for other days and meals |
 | `js/photos.js`, `img/dishes/` | Plate photos for dishes (six stock photos) and a family's own dish photos (600px, gently brightened), kept on the phone and shared with the family through Supabase Storage |
 | `js/understand.js` | Voice understanding: Homzy's own parser first, the AI helper only when it isn't sure; nutrition lookups for new ingredients |
+| `js/money.js` | Money maths shared by the app and the server: daily help months, due dates, gas, UPI links, order text, the morning digest |
+| `api/remind.js` | Daily cron: sends each subscribed phone its morning reminder (web push) |
 | `api/understand.js` | The AI helper (Google Gemini free tier): reads messy sentences and estimates nutrition for unknown ingredients |
 | `js/nutrition.js` | Nutrition table (IFCT 2017 values), meal and weekly maths, outside-food estimates |
 | `js/feedback.js` | Feedback client with an offline outbox |
@@ -70,6 +79,7 @@ Running `schema.sql` also creates the private **dish-photos** Storage bucket and
    - `SUPABASE_SECRET_KEY` = your secret key
    - `SUPABASE_PUBLISHABLE_KEY` = your publishable key (turns on family sync)
    - `ALLOWED_ORIGINS` (optional) = e.g. `https://homzy.in` if you add a custom domain
+   - Morning reminders (optional): run `npx web-push generate-vapid-keys` once and add `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (e.g. `mailto:you@example.com`) and `CRON_SECRET` (any long random text). `vercel.json` already schedules `/api/remind` daily at 02:00 UTC (7:30 am IST); on the free plan Vercel may run it any time within that hour.
    - `GEMINI_API_KEY` (optional) = a free key from <https://aistudio.google.com/apikey>. Turns on the AI helper for long voice sentences and nutrition of new ingredients. Without it, everything still works with Homzy's own parser. `GEMINI_MODEL` (optional) picks the model; the default is `gemini-flash-latest`.
 3. Deploy. To check it worked:
    - **Feedback:** open the app, go to **Family → Send feedback**, send a message, and look in Supabase **Table Editor → feedback**.
@@ -115,6 +125,14 @@ To change the questions, edit `js/survey-data.js`. Feature ids are stored with e
 - The guide bars compare totals with what those same meals should give an adult (ICMR-NIN 2020: 2,000 kcal, 55 g protein, 30 g fibre a day), split as breakfast 25%, lunch 35%, dinner 30% and snacks 10%.
 - Only days up to today count. These numbers are estimates, not medical advice.
 - **New ingredients:** when a recipe or stock item isn't in the table, the AI helper (if set up) estimates its per-100 g values once. They are checked for sensible ranges, saved for the whole home (`foods` in the home's data) and shown as "estimated by AI".
+
+## How money works
+
+- **Daily help** is counted the way a paper milk card works: it is assumed to come on its usual days, and only differences are saved ("didn't come", "2 L instead of 1"). Charged by quantity (milk: litres × rate), per day it comes (newspaper), or a fixed monthly amount (maid: shared out by days only in the month they started).
+- **Bills** move to their next date when paid: every 1/2/3/6/12 months (keeping the day, e.g. the 31st becomes the 28th in February) or every 28/56/84 days (recharges). A bill paid months late jumps to the first date after today.
+- **Gas**: tap Booked, then Delivered. The next "book by" date is the average gap between the last deliveries, minus 5 days.
+- **UPI**: some UPI apps refuse prefilled links to personal UPI IDs for safety. If that happens, use "Copy UPI ID" or mark the payment as cash or another way.
+- **Reminders** need the home saved online (the same as family sharing). Android Chrome works directly; iPhone needs Homzy added to the Home Screen first. One notification a day, only when something is due.
 
 ## How stock works
 

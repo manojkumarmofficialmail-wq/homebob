@@ -2,6 +2,7 @@
 // listens to save() and merges in changes from other phones.
 import { RECIPES, CATALOG } from './data.js';
 import { matchCatalog } from './parse.js';
+import * as $ from './money.js';
 
 const KEY = 'homzy:v1';
 const VERSION = 2;
@@ -35,6 +36,11 @@ export const fresh = () => ({
   stock: [],     // kitchen stock: { id, name, cat, qty, unit, low, at, by } (qty in g, ml, pcs, pkt or bottle)
   stockSince: null, // first day stock was kept: meals before it are never taken out of stock
   foods: {},     // nutrition for ingredients Homzy didn't know: { key: { v: [kcal, protein, carbs, fat, fibre], est } }
+  services: [],  // daily help & deliveries: { id, name, kind, per, qty, unit, rate, days, upi, phone, since, active }
+  svcLog: {},    // { serviceId: { date: qty } }: only days that differ from usual (0 = didn't come)
+  dues: [],      // bills & renewals: { id, name, kind, amount, every, due, day, remind, upi, account, booked, history, active }
+  payments: [],  // { id, kind: 'service'|'bill', ref, name, period, amount, date, via, by }
+  shops: [],     // shops the family orders from: { id, name, phone }
   log: [],       // { at, by, text }
 });
 
@@ -375,10 +381,11 @@ export function removeItem(s, id) {
 // Family sync needs no tombstones: each phone keeps the last copy it agreed with the
 // server, so merge3() sees "was there, now gone" as a delete and keeps it deleted,
 // even when another phone edited the same thing meanwhile (see tests/sync.test.js).
-const LISTS = { item: 'items', task: 'tasks', outside: 'outside', bill: 'bills', recipe: 'recipes', bought: 'bought', stock: 'stock' };
+const LISTS = { item: 'items', task: 'tasks', outside: 'outside', bill: 'bills', recipe: 'recipes', bought: 'bought', stock: 'stock', service: 'services', due: 'dues', payment: 'payments', shop: 'shops' };
 const LABEL = {
   item: (x) => x.name, task: (x) => x.title, outside: (x) => `₹${Math.round(x.amount)} outside`,
   bill: (x) => `₹${Math.round(x.total)} bill`, recipe: (x) => x.name, bought: (x) => x.name, stock: (x) => `${x.name} from stock`,
+  service: (x) => x.name, due: (x) => x.name, payment: (x) => `₹${Math.round(x.amount)} payment to ${x.name}`, shop: (x) => x.name,
 };
 
 /** Delete one thing by id. Returns what's needed to put it back, or null. */
@@ -630,6 +637,119 @@ export function useCookedMeals(s, now = new Date()) {
     }
   }
   return n;
+}
+
+// ---------- Daily help & deliveries ----------
+const clip = (v, n) => String(v ?? '').trim().slice(0, n);
+const money = (v) => { const n = +String(v ?? '').replace(/[^\d.]/g, ''); return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : 0; };
+
+/** Add or update a service (milk, maid…). Fields not given keep their kind's usual values. */
+export function saveService(s, data, id) {
+  const kind = $.SERVICE_KINDS[data.kind] ? data.kind : 'other';
+  const base = $.SERVICE_KINDS[kind];
+  const x = id ? s.services.find((v) => v.id === id) : null;
+  const svc = {
+    // New help usually came all month already: count from the 1st unless told otherwise.
+    ...(x || { id: uid(), since: today().slice(0, 8) + '01', active: true }),
+    name: clip(data.name, 30) || base.label, kind,
+    per: ['unit', 'day', 'month'].includes(data.per) ? data.per : x?.per || base.per,
+    qty: money(data.qty) || x?.qty || base.qty,
+    unit: clip(data.unit ?? x?.unit ?? base.unit, 8),
+    rate: data.rate != null && data.rate !== '' ? money(data.rate) : x?.rate ?? base.rate,
+    days: /^(daily|[0-6]{1,7})$/.test(data.days || '') ? data.days : x?.days || 'daily',
+    upi: clip(data.upi ?? x?.upi, 60), phone: clip(data.phone ?? x?.phone, 15),
+  };
+  if (/^\d{4}-\d{2}-\d{2}$/.test(data.since || '')) svc.since = data.since;
+  if (x) Object.assign(x, svc); else { s.services.push(svc); log(s, `added ${svc.name}`); }
+  return x || svc;
+}
+
+/** Note what came on a day. qty null = the usual (forget the note), 0 = didn't come. */
+export function markService(s, id, date, qty) {
+  const day = (s.svcLog[id] ||= {});
+  if (qty == null) delete day[date]; else day[date] = Math.max(0, +qty);
+  if (!Object.keys(day).length) delete s.svcLog[id];
+}
+
+export const serviceMonth = (s, svc, ym, upto = today()) => $.serviceMonth(svc, s.svcLog, s.payments, ym, upto);
+
+/** Services due to come today that nobody has ticked yet. */
+export const unansweredToday = (s, date = today()) =>
+  s.services.filter((v) => $.scheduled(v, date) && s.svcLog[v.id]?.[date] == null);
+
+// ---------- Payments ----------
+export function recordPayment(s, { kind, ref, name, period, amount, via = 'upi', date = today() }) {
+  const p = { id: uid(), kind, ref, name: clip(name, 40), period, amount: money(amount), date, via, by: s.me };
+  if (!p.amount) return null;
+  s.payments.push(p);
+  log(s, `paid ₹${Math.round(p.amount)} to ${p.name}`);
+  return p;
+}
+
+// ---------- Bills & renewals ----------
+export function saveDue(s, data, id) {
+  const kind = $.DUE_KINDS[data.kind] ? data.kind : 'other';
+  const x = id ? s.dues.find((v) => v.id === id) : null;
+  const every = $.EVERY[data.every] ? data.every : x?.every || $.DUE_KINDS[kind].every;
+  const due = /^\d{4}-\d{2}-\d{2}$/.test(data.due || '') ? data.due : x?.due || today();
+  const b = {
+    ...(x || { id: uid(), active: true, history: [], booked: null }),
+    name: clip(data.name, 30) || $.DUE_KINDS[kind].label, kind, every,
+    amount: data.amount != null && data.amount !== '' ? money(data.amount) : x?.amount || 0,
+    due, day: +due.slice(8, 10),
+    remind: Math.max(0, Math.min(15, Math.round(+(data.remind ?? x?.remind ?? 3)) || 0)),
+    upi: clip(data.upi ?? x?.upi, 60), account: clip(data.account ?? x?.account, 40),
+  };
+  if (x) Object.assign(x, b); else { s.dues.push(b); log(s, `added ${b.name}`); }
+  return x || b;
+}
+
+/** Pay a bill: the payment is recorded and the bill moves to its next date (or ends, if it was once). */
+export function payDue(s, id, { amount, via = 'upi', date = today() } = {}) {
+  const b = s.dues.find((v) => v.id === id);
+  if (!b) return null;
+  const p = recordPayment(s, { kind: 'bill', ref: b.id, name: b.name, period: b.due, amount: amount ?? b.amount, via, date });
+  if (b.every === 'gas') { gasDelivered(s, id, { date }); return p; }
+  let next = $.nextDue(b.due, b.every, b.day);
+  if (!next) { b.active = false; return p; }
+  // Paid very late: skip to the first date after today.
+  while (next <= date) next = $.nextDue(next, b.every, b.day);
+  b.due = next;
+  return p;
+}
+
+/** Gas: booked (it stops asking), then delivered (the next booking date is worked out from the gaps). */
+export function gasBooked(s, id, date = today()) {
+  const b = s.dues.find((v) => v.id === id);
+  if (b) { b.booked = date; log(s, 'booked a gas cylinder'); }
+  return b;
+}
+export function gasDelivered(s, id, { date = today() } = {}) {
+  const b = s.dues.find((v) => v.id === id);
+  if (!b) return null;
+  b.history = [...(b.history || []), date].sort().slice(-8);
+  b.booked = null;
+  b.due = $.gasBookBy(b.history) || b.due;
+  return b;
+}
+
+// ---------- Shops ----------
+export function saveShop(s, { name, phone }, id) {
+  const x = id ? s.shops.find((v) => v.id === id) : null;
+  const shop = { ...(x || { id: uid() }), name: clip(name, 30) || 'Shop', phone: String(phone || '').replace(/[^\d+]/g, '').slice(0, 15) };
+  if (x) Object.assign(x, shop); else s.shops.push(shop);
+  return x || shop;
+}
+
+// ---------- The month in money ----------
+/** What the home spent (or owes) in a month, by kind. Daily help counts what has been earned so far. */
+export function monthMoney(s, ym) {
+  const groceries = monthSpend(s, ym);
+  const outside = monthOutside(s, ym);
+  const help = s.services.reduce((a, v) => a + serviceMonth(s, v, ym).amount, 0);
+  const bills = s.payments.filter((p) => p.kind === 'bill' && p.date.startsWith(ym)).reduce((a, p) => a + p.amount, 0);
+  const helpPaid = s.payments.filter((p) => p.kind === 'service' && p.period === ym).reduce((a, p) => a + p.amount, 0);
+  return { groceries, outside, help, bills, helpPaid, total: groceries + outside + help + bills };
 }
 
 // ---------- Food from outside ----------

@@ -2,12 +2,14 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "cleanUrls": false,
   "trailingSlash": false,
+  "crons": [{ "path": "/api/remind", "schedule": "0 2 * * *" }],
   "rewrites": [{ "source": "/survey", "destination": "/survey.html" }],
   "functions": {
     "api/feedback.js": { "memory": 128, "maxDuration": 10 },
     "api/config.js": { "memory": 128, "maxDuration": 5 },
     "api/survey.js": { "memory": 128, "maxDuration": 10 },
-    "api/understand.js": { "memory": 128, "maxDuration": 12 }
+    "api/understand.js": { "memory": 128, "maxDuration": 12 },
+    "api/remind.js": { "memory": 256, "maxDuration": 60 }
   },
   "headers": [
     {
