@@ -1,5 +1,5 @@
 // Local server that behaves like Vercel: static files with vercel.json headers,
-// plus /api/feedback and /api/config. Run: npm start
+// plus /api/feedback, /api/survey, /api/understand and /api/config. Run: npm start
 // MOCK_SUPABASE=1 npm start fakes Supabase in memory, so feedback and family sync
 // work without a real project.
 import http from 'node:http';
@@ -22,6 +22,7 @@ if (process.env.MOCK_SUPABASE) {
 const { default: feedback } = await import('../api/feedback.js');
 const { default: survey } = await import('../api/survey.js');
 const { default: cloudConfig } = await import('../api/config.js');
+const { default: understand } = await import('../api/understand.js');
 const { mockSupabase } = await import('./mock-supabase.js');
 
 // vercel.json "source" patterns → RegExp (enough for the patterns we use).
@@ -39,21 +40,23 @@ http.createServer(async (req, res) => {
 
   const chunks = [];
   for await (const c of req) chunks.push(c);
-  const raw = Buffer.concat(chunks).toString();
+  const buf = Buffer.concat(chunks);
+  const raw = buf.toString();
 
   if (['/__mock_supabase/rest/v1/feedback', '/__mock_supabase/rest/v1/survey_responses'].includes(url.pathname)) {
     console.log('[mock supabase] insert', raw);
     res.statusCode = 201; return res.end();
   }
-  if (process.env.MOCK_SUPABASE && url.pathname.startsWith('/__mock_supabase/')) return mockSupabase(req, res, url, raw);
+  if (process.env.MOCK_SUPABASE && url.pathname.startsWith('/__mock_supabase/')) return mockSupabase(req, res, url, raw, buf);
   if (url.pathname === '/api/config') {
     // Mock mode: point each origin (localhost, 127.0.0.1…) at its own mock, so two "phones" can share it.
     if (process.env.MOCK_SUPABASE) return shim(res).json({ sync: true, url: `http://${req.headers.host}/__mock_supabase`, key: 'sb_publishable_mock' });
     return cloudConfig(req, shim(res));
   }
-  if (url.pathname === '/api/feedback' || url.pathname === '/api/survey') {
+  const API = { '/api/feedback': feedback, '/api/survey': survey, '/api/understand': understand };
+  if (API[url.pathname]) {
     try { req.body = raw && String(req.headers['content-type']).includes('json') ? JSON.parse(raw) : raw; } catch { req.body = raw; }
-    return (url.pathname === '/api/survey' ? survey : feedback)(req, shim(res));
+    return API[url.pathname](req, shim(res));
   }
 
   let file = path.join(root, decodeURIComponent(url.pathname));

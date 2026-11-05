@@ -670,7 +670,7 @@ main { view-transition-name: page; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .06em; }
 form:not(:has(input[name="who"][value="new"]:checked)) .new-name { display: none; }
 .role-hint { font-weight: 500; }
-body.readonly .fab, body.readonly #view .inline-add { visibility: hidden; }
+body.readonly #view .inline-add { visibility: hidden; }
 .qr-box { background: #fff; border-radius: var(--r-lg); padding: var(--sp-3); width: min(280px, 100%); margin: 0 auto; }
 .qr-box svg { display: block; width: 100%; height: auto; }
 .qr-box svg rect[fill="white"], .qr-box svg path[fill="white"] { fill: #fff; }
@@ -753,7 +753,7 @@ a.menu-row { text-decoration: none; color: inherit; }
   transition: transform .3s var(--spring);
 }
 .fab .ico { width: 28px; height: 28px; stroke-width: 2.6; }
-.fab:active { transform: scale(.92) rotate(90deg); transition-duration: .12s; }
+.kitchen-tab:active .fab { transform: scale(.92); transition-duration: .12s; }
 
 /* The + menu */
 .hub { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -1189,7 +1189,6 @@ main.entering .split .seg { animation: hz-grow-x .9s var(--ease-out) .5s both; t
 .tab-ico::after { display: none; }
 .badge { background: var(--accent-strong); }
 .fab { box-shadow: 0 10px 20px rgb(0 0 0 / 25%), 0 0 0 5px var(--bg); transition: transform .4s var(--ease-spring); }
-body.hub-open .fab { transform: rotate(45deg); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tabs > button { color: var(--muted); } }
 :root[data-theme="dark"] .tabs > button { color: var(--muted); }
 
@@ -1228,3 +1227,91 @@ body.hub-open .fab { transform: rotate(45deg); }
   .dw-disc, .dw-plate { transition: none !important; }
   .steam, .planned-burst, .planned-ring { display: none; }
 }
+
+/* ---------- Kitchen tab (v1.9) ---------- */
+/* The raised round button in the middle of the tab bar is now the Kitchen tab. */
+.kitchen-tab { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; padding-bottom: 6px; font-size: 12px; font-weight: 700; color: var(--muted); min-height: var(--tap); }
+.kitchen-tab .fab { margin-top: -30px; margin-bottom: 2px; width: 56px; height: 56px; }
+.kitchen-tab .fab .ico { width: 26px; height: 26px; stroke-width: 2.1; }
+.kitchen-tab.on { color: var(--ink); font-weight: 800; }
+.kitchen-tab.on .fab { background: var(--accent-strong); color: var(--on-accent); }
+.kitchen-tab:focus-visible { outline-offset: -4px; }
+
+/* "Tell Homzy": the big voice card */
+.k-mic {
+  display: grid; grid-template-columns: auto 1fr; align-items: center; gap: var(--sp-4); width: 100%; text-align: left;
+  padding: var(--sp-4) var(--sp-5) var(--sp-4) var(--sp-4); border-radius: var(--r-xl);
+  background: var(--hero); color: #fff; box-shadow: 0 14px 30px rgb(0 0 0 / 22%);
+  transition: transform .3s var(--spring);
+}
+.k-mic:active { transform: scale(.98); transition-duration: .08s; }
+.k-mic-btn { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; background: #fff; color: #111; box-shadow: 0 0 0 7px rgb(255 255 255 / 9%); animation: k-breathe 2.6s ease-in-out infinite; }
+.k-mic-btn .ico { width: 30px; height: 30px; }
+.k-mic-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.k-mic-text b { font-size: var(--fs-xl); font-weight: 800; }
+.k-mic-text span { font-size: 13px; line-height: 1.4; color: rgb(255 255 255 / 70%); }
+@keyframes k-breathe { 50% { box-shadow: 0 0 0 12px rgb(255 255 255 / 5%); } }
+@media (prefers-reduced-motion: reduce) { .k-mic-btn { animation: none; } }
+
+.k-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.k-tile {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 120px; text-align: left;
+  padding: var(--sp-4); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-1);
+  transition: transform .3s var(--spring);
+}
+.k-tile:active { transform: scale(.96); transition-duration: .08s; }
+.k-ico { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--sage); color: var(--accent-strong); margin-bottom: auto; }
+.k-ico .ico { width: 20px; height: 20px; }
+.k-tile b { font-size: 15px; font-weight: 800; margin-top: var(--sp-3); }
+.k-tile span:last-child { font-size: 12.5px; color: var(--muted); }
+
+.stock-card { flex-direction: row; align-items: center; gap: var(--sp-3); width: 100%; text-align: left; }
+.sc-ico { width: 44px; height: 44px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--sage); color: var(--accent-strong); }
+.sc-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.stock-card > .ico:last-child { width: 18px; color: var(--muted); }
+.low-rows { margin-top: 10px; }
+.meta.warn { color: var(--danger); font-weight: 700; }
+
+/* Our dishes: a strip of plates */
+.dish-strip { display: flex; gap: 14px; overflow-x: auto; padding: 4px 2px 10px; margin: 0 -2px; scroll-snap-type: x mandatory; scrollbar-width: none; }
+.dish-strip::-webkit-scrollbar { display: none; }
+.ds-dish { position: relative; flex: none; width: 92px; display: flex; flex-direction: column; align-items: center; gap: 8px; scroll-snap-align: start; }
+.ds-dish .plate-img { width: 84px; height: 84px; box-shadow: 0 0 0 4px var(--plate), 0 8px 18px rgb(0 0 0 / 14%); }
+.ds-dish .plate-emoji { display: grid; place-items: center; font-size: 40px; background: var(--plate); }
+.ds-dish b { font-size: 12.5px; font-weight: 700; text-align: center; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ds-add { position: absolute; top: 58px; right: 4px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--primary); color: var(--on-primary); box-shadow: 0 0 0 3px var(--bg); }
+.ds-add .ico { width: 15px; height: 15px; }
+
+.menu-row .mr-l { display: inline-flex; align-items: center; gap: var(--sp-3); }
+.menu-row .mr-l .ico { width: 20px; color: var(--accent-strong); }
+
+/* Recipe sheet: photo and spoken ingredients */
+.rp-photo { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 10; border-radius: var(--r-lg); overflow: hidden; cursor: pointer; background: var(--surface-2); border: 1.5px dashed var(--line-strong, var(--line)); }
+.rp-photo.has { border: 0; }
+.rp-img { position: absolute; inset: 0; }
+.rp-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rp-cta { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: var(--sp-4); text-align: center; }
+.rp-cta .ico { width: 30px; height: 30px; color: var(--accent-strong); }
+.rp-cta b { font-size: var(--fs-md); }
+.rp-cta span { font-size: 12.5px; color: var(--muted); font-weight: 500; max-width: 240px; }
+.rp-photo.has .rp-cta { position: absolute; left: 10px; bottom: 10px; flex-direction: row; padding: 8px 14px; border-radius: var(--r-pill); background: rgb(0 0 0 / 62%); color: #fff; backdrop-filter: blur(6px); }
+.rp-photo.has .rp-cta .ico { width: 18px; height: 18px; color: #fff; }
+.rp-photo.has .rp-cta span { display: none; }
+.rp-photo:focus-within { outline: 2px solid var(--focus, var(--accent-strong)); outline-offset: 2px; }
+.field-head { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-2); }
+.ing-mic { min-height: 38px !important; padding: 0 14px !important; gap: 6px; display: inline-flex; align-items: center; font-size: 13px; }
+.ing-mic .ico { width: 16px; height: 16px; }
+.ing-mic.on { background: var(--danger); color: #fff; animation: pulse 1.5s infinite; }
+
+/* Bill review: "Add to kitchen stock" */
+.switch-row { display: flex; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--sage); color: var(--sage-ink); cursor: pointer; }
+.switch-row input { width: 22px; height: 22px; accent-color: var(--ink); flex: none; }
+.switch-row > span { display: flex; flex-direction: column; gap: 2px; }
+.switch-row .meta { color: inherit; opacity: .8; font-weight: 500; }
+
+/* Stock sheet */
+.stock-cat { margin: var(--sp-4) 0 var(--sp-2); }
+.stock-row .stepper { box-shadow: none; padding: 0; background: transparent; }
+.stock-row .stepper button { width: 36px; height: 36px; }
+.stock-sheet form.inline-add { margin: var(--sp-2) 0; }
+.stock-sheet > * { flex-shrink: 0; }

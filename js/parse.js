@@ -210,7 +210,10 @@ const STRONG_TOTAL = /(grand|net|payable|bill\s*amount)/i;
 const moneyIn = (line) =>
   (line.replace(/,(?=\d{3})/g, '').match(/\d+(?:\.\d{1,2})?/g) || []).map(Number);
 
-/** Read OCR text from a bill: returns { items, total, shop }. */
+const PACK_SIZE = /(\d+(?:\.\d+)?)\s*(kgs?|gms?|gr|g|ltrs?|lt|l|ml)\b/i;
+const PACK_UNIT = { kg: 'kg', kgs: 'kg', g: 'g', gm: 'g', gms: 'g', gr: 'g', l: 'L', lt: 'L', ltr: 'L', ltrs: 'L', ml: 'ml' };
+
+/** Read OCR text from a bill: returns { items, total, shop }. Items: { name, cat, price, qty, unit, known }. */
 export function parseBill(text) {
   const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   let total = null, totalStrength = -1;
@@ -231,7 +234,10 @@ export function parseBill(text) {
     if (letters.length < 3) return;
     const nums = moneyIn(line);
     if (!nums.length) return;
-    const name = line.replace(/\bx\b|[\d.,₹@*/%:-]+/gi, ' ').replace(/\s+/g, ' ').trim();
+    // Pack size printed in the name ("Atta 5kg", "Milk 500 ml") becomes the amount.
+    const size = line.match(PACK_SIZE);
+    const name = (size ? line.replace(size[0], ' ') : line).replace(/\bx\b|[\d.,₹@*/%:-]+/gi, ' ').replace(/\s+/g, ' ').trim();
+    if (!name) return;
     const hit = matchCatalog(name);
     const key = hit ? hit.name : name.toLowerCase();
     if (seen.has(key)) return;
@@ -240,6 +246,8 @@ export function parseBill(text) {
       name: hit ? hit.name : titleCase(name.toLowerCase()).slice(0, 40),
       cat: hit ? hit.cat : 'Other',
       price: nums[nums.length - 1],
+      qty: size ? parseFloat(size[1]) : null,
+      unit: size ? PACK_UNIT[size[2].toLowerCase()] : null,
       known: !!hit,
     });
   });
@@ -250,4 +258,48 @@ export function parseBill(text) {
   }
   const shop = lines.find((l) => /\p{L}{3,}/u.test(l) && !SKIP_LINE.test(l) && !moneyIn(l).length) || '';
   return { items, total, shop: titleCase(shop.toLowerCase()).slice(0, 40) };
+}
+
+// ---------- What did they mean? (voice from the Kitchen tab) ----------
+// "made fish curry with half kilo fish and 2 tomatoes" → a dish
+// "add 5 kg rice to stock" / "we have 2 litres oil" → stock
+// anything else → shopping items
+
+const STOCK_WORDS = /(^|\s)(stock|pantry|in the kitchen|at home|we have|we got|bought|vaangi|vangi|വാങ്ങി|സ്റ്റോക്ക്|स्टॉक|खरीदा|kharida)(?=\s|$)/i;
+const STOCK_STRIP = /(^|\s)(add(ed)?|put|to|in|into|the|our|my|stock|pantry|kitchen|at home|we have|we got|bought|vaangi|vangi|വാങ്ങി|സ്റ്റോക്ക്|स्टॉक|खरीदा|kharida|में|mein)(?=\s|$)/gi;
+const DISH_START = /^\s*(?:(?:(?:today|tonight|we|i|amma|have|just)\s+)*(?:made|cooked|prepared|make|cook|prepare)|(?:new\s+)?(?:dish|recipe|meal)(?:\s+called)?|ഇന്ന്|आज)\s+/i;
+const DISH_SPLIT = /\s+(?:with|using|needs|containing|contains|made with|ingredients?|which has|has)\s+|\s*[:–—-]\s+|\s+(?:में|mein|ൽ|il)\s+/i;
+const DISH_TAIL = /\s+(?:ഉണ്ടാക്കി|undakki|banaya|बनाया|today|ഇന്ന്)\s*$/i;
+
+/** "Made fish curry with 500 g fish, 2 tomato" → { name, ing: [{ name, qty, unit }] }, or null. */
+export function parseDish(text) {
+  const t = String(text || '').trim();
+  const started = DISH_START.test(t);
+  const body = t.replace(DISH_START, '');
+  const m = body.match(DISH_SPLIT);
+  if (!m && !started) return null;
+  const name = (m ? body.slice(0, m.index) : body).replace(DISH_TAIL, '').replace(/[.,]+$/, '').trim();
+  if (!name || name.split(/\s+/).length > 6) return null;
+  const rest = m ? body.slice(m.index + m[0].length) : '';
+  const ing = rest ? parseSpeech(rest).map(({ name: n, qty, unit }) => ({ name: n, qty, unit })) : [];
+  return { name: titleCase(name.toLowerCase()).slice(0, 60), ing };
+}
+
+/**
+ * Work out what a spoken sentence is about, without any server.
+ * Returns { kind: 'items'|'dish'|'stock', name?, items, sure } where sure is false when
+ * much of the sentence wasn't understood (then the AI helper may do better).
+ */
+export function understandLocal(text) {
+  const t = String(text || '').trim();
+  if (!t) return { kind: 'items', items: [], sure: false };
+  const dish = parseDish(t);
+  if (dish) return { kind: 'dish', name: dish.name, items: dish.ing, sure: dish.ing.length > 0 || !DISH_SPLIT.test(t) };
+  const isStock = STOCK_WORDS.test(` ${norm(t)} `) || STOCK_WORDS.test(` ${t.toLowerCase()} `);
+  const clean = isStock ? t.replace(STOCK_STRIP, ' ') : t;
+  const items = parseSpeech(clean).map(({ name, qty, unit, cat }) => ({ name, qty, unit, cat }));
+  // Many unknown multi-word "items" usually means a long natural sentence we misread.
+  const odd = items.filter((x) => x.cat === 'Other' && x.name.split(' ').length > 2).length;
+  const sure = items.length > 0 && odd / items.length <= 0.4;
+  return { kind: isStock ? 'stock' : 'items', items, sure };
 }

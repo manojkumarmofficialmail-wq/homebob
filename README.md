@@ -4,6 +4,7 @@ Meal plans, one shared shopping list, chores, weekly family nutrition and food s
 
 - **Household data** (lists, meals, bills, outside food) is kept on the phone, in `localStorage`, and works offline.
 - **Family sync** (optional, no email or password): under Family (tap your picture at the top), the owner taps **Connect** next to a family member and a QR code appears. That person scans it with their phone camera and their phone joins the home as **Can edit** or **View only**. Phones sync through Supabase every ~15 seconds while open, and merge changes made at the same time.
+- **Kitchen tab** (the round button in the middle of the tab bar): a big mic ("Tell Homzy") that understands shopping items, a new home dish, or stock; adding home dishes with a photo and live nutrition; and the kitchen **stock**, filled from scanned bills, used up by cooked meals, with "running low" items one tap from the list.
 - **Feedback** goes to `/api/feedback`, a Vercel function that saves it in Supabase.
 - **Family survey** at `/survey`: a short tour of the features and 12 quick questions. No login; answers go to Supabase through `/api/survey`.
 
@@ -13,7 +14,9 @@ Meal plans, one shared shopping list, chores, weekly family nutrition and food s
 |---|---|
 | `index.html`, `styles.css`, `js/` | The app (plain ES modules) |
 | `js/fx.js`, `js/emoji.js`, `js/wheel.js` | Motion helpers, food emoji for items and dishes, and the spinner sheet for other days and meals |
-| `js/photos.js`, `img/dishes/` | Plate photos for dishes (six stock photos, 480px webp) and a family's own dish photos, kept on the phone |
+| `js/photos.js`, `img/dishes/` | Plate photos for dishes (six stock photos) and a family's own dish photos (600px, gently brightened), kept on the phone and shared with the family through Supabase Storage |
+| `js/understand.js` | Voice understanding: Homzy's own parser first, the AI helper only when it isn't sure; nutrition lookups for new ingredients |
+| `api/understand.js` | The AI helper (Google Gemini free tier): reads messy sentences and estimates nutrition for unknown ingredients |
 | `js/nutrition.js` | Nutrition table (IFCT 2017 values), meal and weekly maths, outside-food estimates |
 | `js/feedback.js` | Feedback client with an offline outbox |
 | `js/cloud.js` | A private anonymous account per phone, and database calls (plain fetch to Supabase, no library) |
@@ -56,6 +59,8 @@ To try two phones with the mock, open `http://localhost:5173` and `http://127.0.
 
 **Authentication → Sign In / Providers**: turn on **Allow anonymous sign-ins**. Each phone then gets its own private account automatically. Nobody types an email or password; scanning the QR code is what gives a phone access.
 
+Running `schema.sql` also creates the private **dish-photos** Storage bucket and its rules (everyone in a home can see its photos; owners and editors can change them). If you set up Supabase before v1.9, run `schema.sql` again: it is safe to re-run.
+
 ### 2. Vercel (hosting + API)
 
 1. Push this repo to GitHub, then in Vercel choose **Add New → Project** and import it.
@@ -65,6 +70,7 @@ To try two phones with the mock, open `http://localhost:5173` and `http://127.0.
    - `SUPABASE_SECRET_KEY` = your secret key
    - `SUPABASE_PUBLISHABLE_KEY` = your publishable key (turns on family sync)
    - `ALLOWED_ORIGINS` (optional) = e.g. `https://homzy.in` if you add a custom domain
+   - `GEMINI_API_KEY` (optional) = a free key from <https://aistudio.google.com/apikey>. Turns on the AI helper for long voice sentences and nutrition of new ingredients. Without it, everything still works with Homzy's own parser. `GEMINI_MODEL` (optional) picks the model; the default is `gemini-flash-latest`.
 3. Deploy. To check it worked:
    - **Feedback:** open the app, go to **Family → Send feedback**, send a message, and look in Supabase **Table Editor → feedback**.
    - **Family sync:** add a family member under Family (your picture at the top), tap **Connect** next to their name, and scan the QR code with another phone's camera.
@@ -108,6 +114,14 @@ To change the questions, edit `js/survey-data.js`. Feature ids are stored with e
 - Food from outside uses rough per-person averages (Light 450, Regular 750, Heavy 1,100 kcal; a snack is 45% of that). It replaces the home meal planned for the same slot.
 - The guide bars compare totals with what those same meals should give an adult (ICMR-NIN 2020: 2,000 kcal, 55 g protein, 30 g fibre a day), split as breakfast 25%, lunch 35%, dinner 30% and snacks 10%.
 - Only days up to today count. These numbers are estimates, not medical advice.
+- **New ingredients:** when a recipe or stock item isn't in the table, the AI helper (if set up) estimates its per-100 g values once. They are checked for sensible ranges, saved for the whole home (`foods` in the home's data) and shown as "estimated by AI".
+
+## How stock works
+
+- Scanning a bill (with **Add to kitchen stock** ticked), saying "add 5 kg rice to stock", or typing on the stock screen adds to stock. Pack sizes printed on bill lines ("Atta 5kg") become amounts.
+- Amounts are kept in grams, millilitres or pieces, so "1 kg" and "500 g" add up.
+- Planned meals come out of stock once they have happened (after 11:00 for breakfast, 16:00 lunch, 22:00 dinner), or straight away with **Cooked it** on the dish. A meal is never taken out twice, meals eaten outside are skipped, and nothing before the day stock was started is touched.
+- "Running low" means 250 g / 250 ml / 2 pieces / 1 packet or less.
 
 ## Security notes
 

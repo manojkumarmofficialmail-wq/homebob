@@ -6,8 +6,10 @@ const SLICE = ['#121212', '#1c1c1c', '#171717']; // the third shade is for an od
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const short = (s, n = 12) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s);
 
-/** SVG for the wheel. dishes: [{ name, emoji }], 2 to 8 of them. */
+let clipSeq = 0;
+/** SVG for the wheel. dishes: [{ name, emoji, photo? }], 2 to 8 of them. A photo fills the plate; otherwise the emoji sits on it. */
 export function wheelSvg(dishes) {
+  const cid = `wp${++clipSeq}`;
   const n = dishes.length, a = 360 / n, R = 150, rad = (d) => ((d - 90) * Math.PI) / 180;
   const pt = (r, d) => `${(R + r * Math.cos(rad(d))).toFixed(2)} ${(R + r * Math.sin(rad(d))).toFixed(2)}`;
   const plate = n > 6 ? 25 : 29;       // plate radius: smaller when the wheel is crowded
@@ -23,8 +25,10 @@ export function wheelSvg(dishes) {
       <g transform="rotate(${mid} ${R} ${R})">
         <circle cx="${R}" cy="${cy + 3}" r="${plate}" fill="rgb(0 0 0 / 45%)"/>
         <circle cx="${R}" cy="${cy}" r="${plate}" fill="#f1f1ee"/>
-        <circle cx="${R}" cy="${cy}" r="${plate * 0.74}" fill="#ffffff"/>
-        <text x="${R}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-size="${Math.round(plate * 0.95)}">${d.emoji}</text>
+        ${d.photo ? `<clipPath id="${cid}-${i}"><circle cx="${R}" cy="${cy}" r="${plate * 0.9}"/></clipPath>
+        <image href="${esc(d.photo)}" x="${R - plate * 0.9}" y="${cy - plate * 0.9}" width="${plate * 1.8}" height="${plate * 1.8}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${cid}-${i})"/>`
+    : `<circle cx="${R}" cy="${cy}" r="${plate * 0.74}" fill="#ffffff"/>
+        <text x="${R}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-size="${Math.round(plate * 0.95)}">${d.emoji}</text>`}
         <text x="${R}" y="${cy + plate + 13}" text-anchor="middle" class="wheel-label">${esc(short(d.name, labelLen))}</text>
       </g>`;
   }).join('');

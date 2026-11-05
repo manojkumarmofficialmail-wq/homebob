@@ -32,6 +32,9 @@ export const fresh = () => ({
   tasks: [],     // { id, title, due, time, assignee, status, by, repeat, declined, doneBy, doneAt }
   bills: [],     // { id, date, shop, total, count, by }
   outside: [],   // food from outside: { id, date, slot, kind, weight, place, amount, people, by, at }
+  stock: [],     // kitchen stock: { id, name, cat, qty, unit, low, at, by } (qty in g, ml, pcs, pkt or bottle)
+  stockSince: null, // first day stock was kept: meals before it are never taken out of stock
+  foods: {},     // nutrition for ingredients Homzy didn't know: { key: { v: [kcal, protein, carbs, fat, fibre], est } }
   log: [],       // { at, by, text }
 });
 
@@ -372,10 +375,10 @@ export function removeItem(s, id) {
 // Family sync needs no tombstones: each phone keeps the last copy it agreed with the
 // server, so merge3() sees "was there, now gone" as a delete and keeps it deleted,
 // even when another phone edited the same thing meanwhile (see tests/sync.test.js).
-const LISTS = { item: 'items', task: 'tasks', outside: 'outside', bill: 'bills', recipe: 'recipes', bought: 'bought' };
+const LISTS = { item: 'items', task: 'tasks', outside: 'outside', bill: 'bills', recipe: 'recipes', bought: 'bought', stock: 'stock' };
 const LABEL = {
   item: (x) => x.name, task: (x) => x.title, outside: (x) => `₹${Math.round(x.amount)} outside`,
-  bill: (x) => `₹${Math.round(x.total)} bill`, recipe: (x) => x.name, bought: (x) => x.name,
+  bill: (x) => `₹${Math.round(x.total)} bill`, recipe: (x) => x.name, bought: (x) => x.name, stock: (x) => `${x.name} from stock`,
 };
 
 /** Delete one thing by id. Returns what's needed to put it back, or null. */
@@ -483,8 +486,9 @@ export function listMatch(s, name) {
   return s.items.find((i) => n.includes(words(i.name)) || words(i.name).includes(n)) || null;
 }
 
-/** Save a scanned bill; matching list items are marked bought by you. */
-export function saveBill(s, { shop, total, lines }) {
+/** Save a scanned bill; matching list items are marked bought by you. With toStock, the lines also go into stock. */
+export function saveBill(s, { shop, total, lines, toStock = false }) {
+  if (toStock) stockAdd(s, lines);
   let matched = 0;
   // Line prices belong to the bill, so spend counts the bill total once.
   const billId = total > 0 ? uid() : null;
@@ -503,6 +507,129 @@ export function monthSpend(s, ym) {
   const bills = s.bills.filter((b) => b.date.startsWith(ym)).reduce((a, b) => a + (+b.total || 0), 0);
   const loose = s.bought.filter((b) => b.bill === null && b.price > 0 && iso(new Date(b.at)).startsWith(ym)).reduce((a, b) => a + b.price, 0);
   return bills + loose;
+}
+
+// ---------- Kitchen stock ----------
+// Amounts are kept in a base unit so they add up: kg → g, L → ml, dozen → pcs.
+const BASE = { kg: ['g', 1000], g: ['g', 1], l: ['ml', 1000], ml: ['ml', 1], dozen: ['pcs', 12], pcs: ['pcs', 1], pkt: ['pkt', 1], bottle: ['bottle', 1] };
+/** { qty, unit } in the base unit, or { qty: null, unit: null } when there is no amount. */
+export function toBase(qty, unit) {
+  if (qty == null || !(+qty > 0)) return { qty: null, unit: null };
+  const [u, f] = BASE[String(unit || 'pcs').toLowerCase()] || ['pcs', 1];
+  return { qty: +(+qty * f).toFixed(2), unit: u };
+}
+// "Running low" at or below this, unless the family set their own level.
+const LOW = { g: 250, ml: 250, pcs: 2, pkt: 1, bottle: 1 };
+export const lowLevel = (x) => (x.low != null ? x.low : LOW[x.unit] ?? 1);
+
+/** The stock entry for a name: exact, or one name inside the other ("Matta rice" ↔ "Rice"). */
+export function stockMatch(s, name) {
+  const k = key(name);
+  const exact = s.stock.find((x) => key(x.name) === k);
+  if (exact) return exact;
+  const words = (x) => ` ${key(x)} `;
+  const n = words(name);
+  return s.stock.find((x) => n.includes(words(x.name)) || words(x.name).includes(n)) || null;
+}
+
+/** Add bought things to stock. lines: [{ name, qty, unit, cat }]. Returns how many were added or topped up. */
+export function stockAdd(s, lines) {
+  let n = 0;
+  for (const l of lines) {
+    const name = String(l.name || '').trim().slice(0, 40);
+    if (!name) continue;
+    const add = toBase(l.qty, l.unit);
+    const x = stockMatch(s, name);
+    if (x) {
+      if (add.qty == null) { if (!(x.qty > 0)) { x.qty = null; x.unit = null; } }
+      else if (x.unit === add.unit && x.qty != null) x.qty = +(x.qty + add.qty).toFixed(2);
+      // A different kind of amount (packets vs grams): trust the newest one.
+      else { x.qty = add.qty; x.unit = add.unit; }
+      x.at = Date.now(); x.by = s.me;
+    } else {
+      s.stock.push({ id: uid(), name, cat: l.cat || catOf(name), qty: add.qty, unit: add.unit, low: null, at: Date.now(), by: s.me });
+    }
+    n++;
+  }
+  if (n) {
+    s.stockSince ||= today();
+    log(s, `added ${n === 1 ? lines.find((l) => l.name).name : n + ' things'} to stock`);
+  }
+  return n;
+}
+
+/** Step one stock entry up or down by a sensible amount for its unit. Never below zero. */
+export function stockStep(s, id, d) {
+  const x = s.stock.find((y) => y.id === id);
+  if (!x) return null;
+  if (!x.unit) { x.unit = 'pcs'; x.qty = 0; }
+  const big = (x.qty || 0) >= 1000;
+  const step = x.unit === 'g' || x.unit === 'ml' ? (big ? 500 : 100) : 1;
+  x.qty = Math.max(0, +((x.qty || 0) + d * step).toFixed(2));
+  x.at = Date.now(); x.by = s.me;
+  return x;
+}
+
+/** Set an amount (in any unit) or a name. */
+export function stockSet(s, id, { qty, unit, name } = {}) {
+  const x = s.stock.find((y) => y.id === id);
+  if (!x) return null;
+  if (qty !== undefined) {
+    const b = toBase(qty, unit || x.unit);
+    x.qty = b.qty ?? 0; x.unit = b.unit || x.unit || 'pcs';
+  }
+  if (name) { x.name = String(name).trim().slice(0, 40); x.cat = catOf(x.name); }
+  x.at = Date.now(); x.by = s.me;
+  return x;
+}
+
+/** Stock that is running low or used up (only entries with an amount). */
+export const stockLow = (s) => s.stock.filter((x) => x.qty != null && x.qty <= lowLevel(x));
+
+/** Take a cooked meal's ingredients out of stock. Returns the names that went down. */
+export function stockUse(s, r, people) {
+  const used = [];
+  for (const ing of scaled(r, people)) {
+    const x = stockMatch(s, ing.name);
+    const take = toBase(ing.qty, ing.unit);
+    if (!x || x.qty == null || take.qty == null || take.unit !== x.unit) continue;
+    x.qty = Math.max(0, +(x.qty - take.qty).toFixed(2));
+    x.at = Date.now();
+    used.push(x.name);
+  }
+  return used;
+}
+
+/** Mark a planned meal as cooked: its ingredients come out of stock, only once. */
+export function cookMeal(s, date, slot) {
+  const m = mealAt(s, date, slot);
+  const r = m && recipe(s, m.rid);
+  if (!r || m.used) return null;
+  m.used = true;
+  const used = stockUse(s, r, m.people);
+  log(s, `cooked ${r.name}`);
+  return used;
+}
+
+const SLOT_DONE = { b: 11, l: 16, d: 22 }; // after this hour a planned meal counts as cooked
+/** Take meals that have already happened out of stock (only since stock began, last 3 days). */
+export function useCookedMeals(s, now = new Date()) {
+  if (!s.stockSince || !s.stock.length) return 0;
+  const t = iso(now);
+  let n = 0;
+  for (let i = 3; i >= 0; i--) {
+    const date = addDays(t, -i);
+    if (date < s.stockSince) continue;
+    for (const slot of ['b', 'l', 'd']) {
+      const m = mealAt(s, date, slot);
+      if (!m || m.used) continue;
+      if (date === t && now.getHours() < SLOT_DONE[slot]) continue;
+      // Eaten outside instead: nothing was cooked.
+      if (s.outside.some((o) => o.date === date && o.slot === slot)) { m.used = true; continue; }
+      if (cookMeal(s, date, slot)) n++;
+    }
+  }
+  return n;
 }
 
 // ---------- Food from outside ----------

@@ -176,3 +176,35 @@ export const listMembers = (hid) =>
 
 export const listInvites = (hid) =>
   authed(`/rest/v1/household_invites?household_id=eq.${encodeURIComponent(hid)}&used_at=is.null&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&select=code,role,member_id,expires_at&order=created_at.desc`);
+
+// ---------- Dish photos (Supabase Storage, bucket "dish-photos", one folder per home) ----------
+async function storage(path, { method = 'GET', blob } = {}) {
+  const c = cfg || (await config());
+  if (!c) throw new CloudError('Family sync isn’t set up on this site yet.', { code: 'not_configured' });
+  const go = (tok) => fetch(`${c.url}/storage/v1/${path}`, {
+    method,
+    headers: {
+      apikey: c.key, Authorization: `Bearer ${tok}`,
+      ...(blob ? { 'Content-Type': blob.type || 'image/webp', 'x-upsert': 'true', 'cache-control': '86400' } : {}),
+    },
+    body: blob,
+  });
+  let res;
+  try {
+    res = await go(await token());
+    if ((res.status === 401 || res.status === 403) && session) { await refresh(); res = await go(session.access_token); }
+  } catch (e) {
+    if (e instanceof CloudError) throw e;
+    throw new CloudError('You’re offline. Try again when you have internet.', { offline: true });
+  }
+  if (!res.ok) throw new CloudError('Couldn’t share the photo with your family.', { status: res.status });
+  return res;
+}
+const photoPath = (hid, rid) => `dish-photos/${encodeURIComponent(hid)}/${encodeURIComponent(rid)}`;
+
+/** Save a dish photo for the whole family (replaces the old one). */
+export const uploadPhoto = (hid, rid, blob) => storage(`object/${photoPath(hid, rid)}`, { method: 'POST', blob });
+/** A family member's dish photo, as a Blob. */
+export const downloadPhoto = async (hid, rid) => (await storage(`object/authenticated/${photoPath(hid, rid)}`)).blob();
+/** Remove a dish photo for everyone. */
+export const deletePhoto = (hid, rid) => storage(`object/${photoPath(hid, rid)}`, { method: 'DELETE' });
