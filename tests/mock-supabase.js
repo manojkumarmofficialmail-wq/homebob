@@ -8,6 +8,8 @@ const households = new Map(); // id → { id, name, data, rev }
 const members = [];          // { household_id, user_id, role, member_id, email, joined_at }
 const invites = new Map();   // code → { code, household_id, role, member_id, expires_at, used_at, created_at }
 const photos = new Map();    // 'dish-photos/<hid>/<rid>' → { type, buf }
+const pushes = new Map();    // endpoint → { endpoint, household_id, user_id, member_id, p256dh, auth }
+export const mockPushes = pushes;
 const CODE = '123456';
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
@@ -56,6 +58,15 @@ const RPC = {
     inv.used_at = new Date().toISOString();
     return { household_id: inv.household_id, role: inv.role, member_id: inv.member_id };
   },
+  save_push(uid, { p_endpoint, p_p256dh, p_auth, p_member_id }) {
+    const m = mine(uid);
+    if (!m) throw fail('not_in_household');
+    if (!String(p_endpoint).startsWith('https://')) throw fail('bad endpoint');
+    pushes.set(p_endpoint, { endpoint: p_endpoint, household_id: m.household_id, user_id: uid, member_id: p_member_id, p256dh: p_p256dh, auth: p_auth });
+    console.log(`[mock supabase] reminders on for phone ${uid.slice(0, 8)}`);
+    return null;
+  },
+  delete_push(uid, { p_endpoint }) { const p = pushes.get(p_endpoint); if (p && p.user_id === uid) pushes.delete(p_endpoint); return null; },
   set_my_member(uid, { p_member_id }) { const m = mine(uid); if (m) m.member_id = p_member_id; return null; },
   set_member_role(uid, { p_user, p_role }) {
     const hid = ownerOf(uid);
@@ -121,6 +132,19 @@ export function mockSupabase(req, res, url, raw, buf) {
       return u ? send(200, session(u)) : send(400, { error_code: 'refresh_token_not_found', msg: 'Invalid Refresh Token' });
     }
     if (path === '/auth/v1/logout') return send(204);
+
+    // The server's secret key (used by /api/remind): read homes and reminder subscriptions.
+    if (process.env.SUPABASE_SECRET_KEY && req.headers.apikey === process.env.SUPABASE_SECRET_KEY) {
+      if (path === '/rest/v1/push_subscriptions') {
+        if (req.method === 'DELETE') { pushes.delete(q('endpoint')); return send(204); }
+        return send(200, [...pushes.values()]);
+      }
+      if (path === '/rest/v1/households') {
+        const ids = (url.searchParams.get('id') || '').replace(/^in\.\(|\)$/g, '').split(',');
+        return send(200, ids.map((id) => households.get(id)).filter(Boolean).map((h) => ({ id: h.id, name: h.name, data: h.data })));
+      }
+      return send(404, { message: 'not mocked for the secret key: ' + path });
+    }
     if (!me) return send(401, { message: 'JWT expired', code: 'PGRST301' });
     if (path === '/auth/v1/user') return send(200, me);
 

@@ -286,13 +286,13 @@ button.pill:active { transform: scale(.97); }
 .field { display: flex; flex-direction: column; gap: var(--sp-2); font-weight: 750; font-size: var(--fs-sm); position: relative; }
 .field-label { font-weight: 750; font-size: var(--fs-sm); }
 .opt { color: var(--muted); font-weight: 500; font-size: 13px; }
-.field input, .field select, .field textarea, .inline-add input, .search, .add-bill input, .draft input, .draft select {
+.field input, .field select, .field textarea, .inline-add input, .search, .add-bill input, .add-shop input, .draft input, .draft select {
   width: 100%; min-height: 52px; padding: 0 var(--sp-4); border-radius: var(--r-md); border: 1.5px solid transparent;
   background: var(--surface); font-size: var(--fs-md); font-weight: 500; color: var(--ink);
   transition: border-color var(--dur), box-shadow var(--dur);
 }
 .field textarea { padding: var(--sp-3) var(--sp-4); min-height: 132px; resize: vertical; line-height: 1.5; }
-.field input:focus, .field select:focus, .field textarea:focus, .inline-add input:focus, .search:focus, .add-bill input:focus, .draft input:focus, .draft select:focus {
+.field input:focus, .field select:focus, .field textarea:focus, .inline-add input:focus, .search:focus, .add-bill input:focus, .add-shop input:focus, .draft input:focus, .draft select:focus {
   border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); outline: none;
 }
 ::placeholder { color: color-mix(in srgb, var(--muted) 85%, transparent); }
@@ -1314,4 +1314,65 @@ main.entering .split .seg { animation: hz-grow-x .9s var(--ease-out) .5s both; t
 .stock-row .stepper { box-shadow: none; padding: 0; background: transparent; }
 .stock-row .stepper button { width: 36px; height: 36px; }
 .stock-sheet form.inline-add { margin: var(--sp-2) 0; }
-.stock-sheet > * { flex-shrink: 0; }
+/* Sheets scroll; their cards and lists must keep their height instead of squashing. */
+.sheet > * { flex-shrink: 0; }
+
+/* ---------- Money tab (v2.0) ---------- */
+.money-hero {
+  display: flex; flex-direction: column; gap: 6px; padding: var(--sp-5); border-radius: var(--r-xl);
+  background: var(--hero); color: #fff; box-shadow: 0 14px 30px rgb(0 0 0 / 22%);
+}
+.mh-nav { display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 700; color: rgb(255 255 255 / 75%); }
+.mh-nav button { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: rgb(255 255 255 / 10%); color: #fff; }
+.mh-nav button:disabled { opacity: .3; }
+.mh-nav .ico { width: 18px; height: 18px; }
+.mh-total { font-size: 40px; font-weight: 800; letter-spacing: -.02em; line-height: 1.1; margin-top: 6px; }
+.mh-sub { font-size: 13px; color: rgb(255 255 255 / 70%); }
+.mh-parts { list-style: none; display: flex; flex-direction: column; gap: 10px; margin-top: var(--sp-3); }
+.mh-parts li { display: grid; grid-template-columns: 112px 1fr auto; align-items: center; gap: 10px; font-size: 13.5px; }
+.mh-l { display: inline-flex; align-items: center; gap: 8px; color: rgb(255 255 255 / 85%); }
+.mh-l .ico { width: 16px; height: 16px; color: var(--sage-lt); }
+.mh-bar { height: 8px; border-radius: 99px; background: rgb(255 255 255 / 10%); overflow: hidden; }
+.mh-bar i { display: block; height: 100%; border-radius: inherit; background: var(--sage-lt); min-width: 2px; transition: width .6s var(--spring); }
+.mh-parts b { font-weight: 800; min-width: 64px; text-align: right; }
+
+.meta.tone-over { color: var(--danger); font-weight: 700; }
+.meta.tone-today, .meta.tone-soon { color: var(--accent-strong); font-weight: 700; }
+.today-card { gap: var(--sp-2); }
+.today-card .sec-head { margin: 0; }
+.today-card .eyebrow { margin: 0; }
+
+/* Daily help calendar */
+.svc-cal { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.cal-head { display: flex; align-items: center; justify-content: space-between; }
+.cal-head button { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); }
+.cal-head button:disabled { opacity: .35; }
+.cal-head .ico { width: 18px; height: 18px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.cal-wd { text-align: center; font-size: 12px; font-weight: 700; color: var(--muted); padding-bottom: 2px; }
+.cal-day {
+  position: relative; aspect-ratio: 1; border-radius: 12px; display: grid; place-items: center;
+  font-weight: 700; font-size: 14px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line);
+}
+.cal-day.came { background: var(--sage); color: var(--sage-ink); box-shadow: none; }
+.cal-day.missed { background: var(--danger-soft, #fde7e5); color: var(--danger); box-shadow: none; text-decoration: line-through; }
+.cal-day.extra { background: var(--accent-strong); color: var(--on-accent); box-shadow: none; }
+.cal-day.off { color: var(--muted); background: transparent; }
+.cal-day.future { opacity: .35; }
+.cal-day.today { outline: 2px solid var(--ink); outline-offset: 1px; }
+.cal-day small { position: absolute; right: 4px; bottom: 2px; font-size: 10px; font-weight: 800; }
+.cal-sum { text-align: center; font-size: 14px; }
+.cal-sum b { font-size: 18px; }
+.wd-chips .chip { min-width: 52px; justify-content: center; }
+.form-err { color: var(--danger); font-weight: 700; font-size: var(--fs-sm); }
+
+/* Pay sheet */
+.pay-qr summary { cursor: pointer; font-weight: 700; padding: var(--sp-2) 0; }
+.pay-qr .qr-box { display: grid; place-items: center; padding: var(--sp-3); background: #fff; border-radius: var(--r-md); }
+.pay-qr .qr-box svg { width: min(240px, 70vw); height: auto; }
+
+.order-text { white-space: pre-wrap; font: 500 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--surface); border-radius: var(--r-md); padding: var(--sp-3) var(--sp-4); max-height: 180px; overflow: auto; box-shadow: var(--shadow-1); }
+.add-shop { grid-template-columns: 1fr 1fr; }
+.add-shop .btn { grid-column: 1 / -1; }
+.remind-card { gap: var(--sp-3); }
+.remind-card .pair { justify-content: flex-end; }

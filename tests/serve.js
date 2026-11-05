@@ -1,5 +1,5 @@
 // Local server that behaves like Vercel: static files with vercel.json headers,
-// plus /api/feedback, /api/survey, /api/understand and /api/config. Run: npm start
+// plus /api/feedback, /api/survey, /api/understand, /api/remind and /api/config. Run: npm start
 // MOCK_SUPABASE=1 npm start fakes Supabase in memory, so feedback and family sync
 // work without a real project.
 import http from 'node:http';
@@ -23,6 +23,7 @@ const { default: feedback } = await import('../api/feedback.js');
 const { default: survey } = await import('../api/survey.js');
 const { default: cloudConfig } = await import('../api/config.js');
 const { default: understand } = await import('../api/understand.js');
+const { default: remind } = await import('../api/remind.js');
 const { mockSupabase } = await import('./mock-supabase.js');
 
 // vercel.json "source" patterns → RegExp (enough for the patterns we use).
@@ -50,10 +51,10 @@ http.createServer(async (req, res) => {
   if (process.env.MOCK_SUPABASE && url.pathname.startsWith('/__mock_supabase/')) return mockSupabase(req, res, url, raw, buf);
   if (url.pathname === '/api/config') {
     // Mock mode: point each origin (localhost, 127.0.0.1…) at its own mock, so two "phones" can share it.
-    if (process.env.MOCK_SUPABASE) return shim(res).json({ sync: true, url: `http://${req.headers.host}/__mock_supabase`, key: 'sb_publishable_mock' });
+    if (process.env.MOCK_SUPABASE) return shim(res).json({ sync: true, url: `http://${req.headers.host}/__mock_supabase`, key: 'sb_publishable_mock', push: process.env.VAPID_PUBLIC_KEY || null });
     return cloudConfig(req, shim(res));
   }
-  const API = { '/api/feedback': feedback, '/api/survey': survey, '/api/understand': understand };
+  const API = { '/api/feedback': feedback, '/api/survey': survey, '/api/understand': understand, '/api/remind': remind };
   if (API[url.pathname]) {
     try { req.body = raw && String(req.headers['content-type']).includes('json') ? JSON.parse(raw) : raw; } catch { req.body = raw; }
     return API[url.pathname](req, shim(res));

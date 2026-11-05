@@ -4,6 +4,7 @@ import { parseSpeech, understandLocal } from './parse.js';
 import { understand, fillNutrition } from './understand.js';
 import { canListen, listen, speechError } from './speech.js';
 import * as N from './nutrition.js';
+import * as Mo from './money.js';
 import { sendFeedback, flushOutbox } from './feedback.js';
 import * as C from './cloud.js';
 import * as S from './sync.js';
@@ -387,6 +388,8 @@ function homeView() {
 
     ${wheelHtml()}
 
+    ${todayCard()}
+
     <button class="shop-card" data-action="tab" data-tab="list">
       <span class="shop-ico">${I.cart}</span>
       <span class="shop-text"><b>Shopping · ${toBuy ? `${toBuy} to buy` : 'nothing to buy'}</b><span>${toBuy ? 'Everyone sees the same list' : 'Tap to add a few items'}</span></span>
@@ -599,7 +602,7 @@ function listView() {
       ${claimed.length ? `${section('Someone’s buying', `<span class="count">${claimed.length}</span>`)}<ul class="rows cards" aria-label="Someone’s buying">${claimed.map(itemRow).join('')}</ul>` : ''}
       ${!s.items.length ? emptyState(I.cart, 'Nothing to buy', viewOnly() ? 'When your family adds items, they appear here.' : 'Tap a suggestion, type above, or press + and speak a few items at once.')
         : `${viewOnly() ? '' : '<p class="note plain small">Tap “I’ll buy” to take it on and the tick when it’s bought. Swipe left to delete.</p>'}
-           <button class="btn ghost wide" data-action="share-list">${I.share} Share list on WhatsApp</button>`}
+           <button class="btn coral wide" data-action="order">${I.send} Order these ${plural(needed.length || s.items.length, 'item')}</button>`}
     ` : boughtView()}`;
 }
 
@@ -680,6 +683,7 @@ function familyView() {
     ${section('Home settings')}
     <div class="card stack-sm">
       <button class="menu-row" data-action="settings">Home name, portions & voice ${I.chev}</button>
+      <button class="menu-row" data-action="reminders">Morning reminders · ${pref('reminders', 'off') === 'on' ? 'On' : 'Off'} ${I.chev}</button>
       <button class="menu-row" data-action="backup">Download a backup ${I.chev}</button>
       ${viewOnly() ? '' : `<button class="menu-row" data-action="restore-file">Restore from backup ${I.chev}</button>`}
       ${S.linked() ? '' : `<button class="menu-row danger" data-action="reset">Delete this home’s data ${I.chev}</button>`}
@@ -859,7 +863,403 @@ function lowRow(x) {
   </li>`;
 }
 
-const VIEWS = { home: homeView, plan: planView, kitchen: kitchenView, list: listView, week: weekView, family: familyView };
+// ---------- Money: daily help, bills and the month ----------
+let moneyYm = null;      // the month on the Money tab (null = this month)
+const thisYm = () => today().slice(0, 7);
+const KIND_HUE = { milk: 205, newspaper: 40, maid: 160, cook: 20, water: 195, driver: 260, other: 90, electricity: 48, gas: 12, mobile: 230, dth: 280, internet: 200, rent: 30, school: 140, insurance: 120, emi: 300 };
+const bubble = (emoji, kind) => `<span class="food" style="--h:${KIND_HUE[kind] ?? 90}" aria-hidden="true">${emoji}</span>`;
+const svcBubble = (v) => bubble(Mo.SERVICE_KINDS[v.kind]?.emoji || '🧾', v.kind);
+const dueBubble = (b) => bubble(Mo.DUE_KINDS[b.kind]?.emoji || '🧾', b.kind);
+const usualTxt = (v) => v.per === 'month' ? `${rupees(v.rate)} a month` : v.per === 'day' ? `${rupees(v.rate)} a day` : `${+v.qty} ${v.unit || ''} · ${rupees(v.rate)}${v.unit ? '/' + v.unit : ''}`.replace(/\s+·/, ' ·');
+const whenTxt = (date) => { const d = dayName(date); return /^(Today|Tomorrow|Yesterday)$/.test(d) ? d.toLowerCase() : d; };
+
+function moneyView() {
+  const ym = moneyYm || thisYm();
+  const isNow = ym === thisYm();
+  const cur = M.monthMoney(s, ym), prev = M.monthMoney(s, Mo.prevMonth(ym));
+  const diff = cur.total - prev.total;
+  const parts = [['groceries', 'Groceries', I.cart], ['outside', 'Eating out', I.bowl], ['help', 'Daily help', I.hand], ['bills', 'Bills', I.receipt]];
+  const max = Math.max(1, ...parts.map(([k]) => cur[k]));
+  const dues = s.dues.filter((b) => b.active !== false).map((b) => ({ b, date: Mo.dueDateOf(b) }))
+    .sort((x, y) => (x.date || '9999').localeCompare(y.date || '9999'));
+  const pays = s.payments.filter((p) => p.date.startsWith(ym)).sort((a, b) => b.date.localeCompare(a.date));
+  return `
+    ${head('Money', `${esc(s.home.name)} · ${isNow ? 'this month' : esc(Mo.monthName(ym) + ' ' + ym.slice(0, 4))}`)}
+    <section class="money-hero" aria-label="Money this month">
+      <div class="mh-nav">
+        <button data-action="money-month" data-d="-1" aria-label="Previous month">${I.back}</button>
+        <span>${esc(Mo.monthName(ym))} ${ym.slice(0, 4)}</span>
+        <button data-action="money-month" data-d="1" aria-label="Next month" ${isNow ? 'disabled' : ''}>${I.chev}</button>
+      </div>
+      <b class="mh-total">${rupees(cur.total)}</b>
+      <p class="mh-sub">${prev.total ? `${diff >= 0 ? '↑' : '↓'} ${rupees(Math.abs(diff))} ${diff >= 0 ? 'more' : 'less'} than ${esc(Mo.monthName(Mo.prevMonth(ym)))}` : 'Groceries, eating out, daily help and bills'}${isNow ? ' · so far' : ''}</p>
+      <ul class="mh-parts">${parts.map(([k, label, ic]) => `<li><span class="mh-l">${ic}${label}</span><span class="mh-bar"><i style="width:${Math.round((cur[k] / max) * 100)}%"></i></span><b>${rupees(cur[k])}</b></li>`).join('')}</ul>
+    </section>
+
+    ${(s.services.length || s.dues.length) && pref('reminders', 'off') !== 'on' && !pref('remind-snooze', '') ? `<section class="card remind-card">
+      <p class="empty-line">${I.bell}<span><b>Get a reminder each morning</b> when a bill is due, the gas needs booking or the milkman needs paying.</span></p>
+      <div class="pair"><button class="pill ghost" data-action="remind-snooze">Not now</button><button class="pill coral" data-action="reminders">Turn on</button></div>
+    </section>` : ''}
+
+    ${section('Daily help', `<button class="link" data-action="svc-new">${I.plus} Add</button>`)}
+    ${s.services.length ? `<ul class="card rows">${s.services.map((v) => svcRow(v, ym)).join('')}</ul>`
+      : `<div class="card empty-card"><p class="empty-line">${I.hand}<span>Milk, maid, newspaper… Homzy counts the days they come and works out what you owe each month.</span></p>
+        <div class="chips">${['milk', 'maid', 'newspaper', 'cook', 'water'].map((k) => `<button class="chip" data-action="svc-new" data-kind="${k}">${Mo.SERVICE_KINDS[k].emoji} ${Mo.SERVICE_KINDS[k].label}</button>`).join('')}</div></div>`}
+
+    ${section('Bills & renewals', `<button class="link" data-action="due-new">${I.plus} Add</button>`)}
+    ${dues.length ? `<ul class="card rows">${dues.map(({ b, date }) => dueRow(b, date)).join('')}</ul>`
+      : `<div class="card empty-card"><p class="empty-line">${I.bell}<span>Electricity, gas, recharge, rent, school fees… Homzy reminds you before they’re due.</span></p>
+        <div class="chips">${['electricity', 'gas', 'mobile', 'rent', 'school', 'internet'].map((k) => `<button class="chip" data-action="due-new" data-kind="${k}">${Mo.DUE_KINDS[k].emoji} ${Mo.DUE_KINDS[k].label}</button>`).join('')}</div></div>`}
+
+    ${pays.length ? `${section('Paid in ' + esc(Mo.monthName(ym)))}
+      <ul class="card rows">${pays.slice(0, 12).map((p) => `<li class="row">
+        <span class="row-main static"><b>${esc(p.name)}</b><span class="meta">${esc([dayName(p.date), p.via === 'upi' ? 'UPI' : p.via === 'cash' ? 'Cash' : 'Other', p.by !== s.me ? Who(p.by) : ''].filter(Boolean).join(' · '))}</span></span>
+        <b class="amount">${rupees(p.amount)}</b>${delBtn('payment-remove', p.id, `${rupees(p.amount)} to ${p.name}`)}</li>`).join('')}</ul>` : ''}`;
+}
+
+function svcRow(v, ym) {
+  const isNow = ym === thisYm();
+  const m = M.serviceMonth(s, v, ym);
+  const t = today(), q = s.svcLog[v.id]?.[t], sch = Mo.scheduled(v, t);
+  const todayTxt = !isNow ? '' : q === 0 ? 'Didn’t come today' : q != null ? 'Came today ✓' : sch ? 'Due today' : 'Not today';
+  const lastYm = Mo.prevMonth(ym);
+  const last = isNow ? M.serviceMonth(s, v, lastYm) : null;
+  let pay = '';
+  if (last && last.due > 0) pay = `<button class="pill coral" data-action="svc-pay" data-id="${v.id}" data-ym="${lastYm}">Pay ${esc(Mo.monthName(lastYm, 'short'))} ${rupees(last.due)}</button>`;
+  else if (m.due > 0) pay = `<button class="pill ${m.full ? 'coral' : 'ghost'}" data-action="svc-pay" data-id="${v.id}" data-ym="${ym}">Pay ${rupees(m.due)}</button>`;
+  else if (m.amount > 0) pay = '<span class="tag">Paid</span>';
+  return `<li class="row">${svcBubble(v)}
+    <button class="row-main" data-action="svc" data-id="${v.id}"><b>${esc(v.name)}</b>
+      <span class="meta">${esc([todayTxt, `${plural(m.came, 'day')}${m.missed ? ` · ${m.missed} missed` : ''}`, rupees(m.amount) + (m.paid ? ` · ${rupees(m.paid)} paid` : '')].filter(Boolean).join(' · '))}</span></button>
+    ${pay}</li>`;
+}
+
+function dueRow(b, date) {
+  const st = Mo.dueState(date, today(), b.remind ?? 3);
+  const gas = b.every === 'gas';
+  const when = gas && b.booked ? `Booked ${whenTxt(b.booked)}`
+    : !date ? ''
+    : st.tone === 'over' ? (gas ? 'Book now' : `${plural(-st.days, 'day')} late`)
+    : gas ? `Book by ${whenTxt(date)}` : `Due ${whenTxt(date)}`;
+  const act = gas
+    ? (b.booked ? `<button class="pill coral" data-action="due-pay" data-id="${b.id}">Delivered</button>` : `<button class="pill ${st.tone === 'later' ? 'ghost' : 'coral'}" data-action="gas-booked" data-id="${b.id}">Booked</button>`)
+    : `<button class="pill ${st.tone === 'later' ? 'ghost' : 'coral'}" data-action="due-pay" data-id="${b.id}">Pay</button>`;
+  return `<li class="row">${dueBubble(b)}
+    <button class="row-main" data-action="due" data-id="${b.id}"><b>${esc(b.name)}</b>
+      <span class="meta tone-${st.tone}">${esc([b.amount ? rupees(b.amount) : '', when].filter(Boolean).join(' · '))}</span></button>
+    ${act}</li>`;
+}
+
+/** Home: what needs a tap today (daily help to confirm, bills due soon). Nothing → no card. */
+function todayCard() {
+  const t = today();
+  const help = M.unansweredToday(s, t);
+  const soon = Mo.duesSoon(s.dues, t).slice(0, 3);
+  if (!help.length && !soon.length) return '';
+  return `<section class="card today-card">
+    <div class="sec-head"><p class="eyebrow">${I.bell} Today</p><button class="link" data-action="tab" data-tab="money">Money ${I.chev}</button></div>
+    <ul class="rows">
+      ${help.map((v) => `<li class="row">${svcBubble(v)}
+        <span class="row-main static"><b>${esc(v.name)} came?</b><span class="meta">${esc(usualTxt(v))}</span></span>
+        <div class="pair"><button class="pill ghost" data-action="svc-today" data-id="${v.id}" data-q="0">No</button><button class="pill coral" data-action="svc-today" data-id="${v.id}" data-q="1">Came</button></div>
+      </li>`).join('')}
+      ${soon.map((b) => `<li class="row">${dueBubble(b)}
+        <button class="row-main" data-action="due" data-id="${b.id}"><b>${esc(b.every === 'gas' ? 'Book gas cylinder' : b.name)}</b>
+          <span class="meta tone-${b.tone}">${esc([b.amount && b.every !== 'gas' ? rupees(b.amount) : '', b.tone === 'over' ? (b.every === 'gas' ? 'due now' : `${plural(-b.days, 'day')} late`) : `${b.every === 'gas' ? 'by' : 'due'} ${whenTxt(b.date)}`].filter(Boolean).join(' · '))}</span></button>
+        ${b.every === 'gas' ? `<button class="pill coral" data-action="gas-booked" data-id="${b.id}">Booked</button>` : `<button class="pill coral" data-action="due-pay" data-id="${b.id}">Pay</button>`}
+      </li>`).join('')}
+    </ul></section>`;
+}
+
+// ----- Daily help sheet: details and the month's calendar -----
+let svcCal = null; // { id, ym }
+function svcCalHtml(v, ym) {
+  const m = M.serviceMonth(s, v, ym);
+  const first = Mo.weekdayOf(`${ym}-01`);
+  const n = Mo.daysInMonth(ym), t = today(), usual = +v.qty || 1;
+  const cells = [];
+  for (let i = 0; i < first; i++) cells.push('<span></span>');
+  for (let d = 1; d <= n; d++) {
+    const date = `${ym}-${String(d).padStart(2, '0')}`;
+    const sch = Mo.scheduled(v, date), q = Mo.dayQty(s.svcLog, v, date);
+    const cls = date > t ? 'future' : q > 0 ? (q !== usual || !sch ? 'extra' : 'came') : sch ? 'missed' : 'off';
+    const label = { came: 'came', missed: 'didn’t come', extra: `${q} ${v.unit || 'times'}`, off: 'not a usual day', future: '' }[cls];
+    cells.push(`<button type="button" class="cal-day ${cls} ${date === t ? 'today' : ''}" data-action="svc-day" data-id="${v.id}" data-date="${date}" ${date > t ? 'disabled' : ''} aria-label="${d} ${esc(Mo.monthName(ym))}: ${label}">${d}${cls === 'extra' && v.per === 'unit' ? `<small>${q}</small>` : ''}</button>`);
+  }
+  return `<div class="cal-head">
+      <button type="button" data-action="svc-cal" data-d="-1" aria-label="Previous month">${I.back}</button>
+      <b>${esc(Mo.monthName(ym))} ${ym.slice(0, 4)}</b>
+      <button type="button" data-action="svc-cal" data-d="1" aria-label="Next month" ${ym >= thisYm() ? 'disabled' : ''}>${I.chev}</button>
+    </div>
+    <div class="cal-grid">${Mo.WEEKDAYS.map((w) => `<span class="cal-wd">${w[0]}</span>`).join('')}${cells.join('')}</div>
+    <p class="cal-sum"><b>${rupees(m.amount)}</b> · ${plural(m.came, 'day')}${m.missed ? ` · ${m.missed} missed` : ''}${v.per === 'unit' ? ` · ${m.qty} ${esc(v.unit || '')}` : ''}${m.paid ? ` · ${rupees(m.paid)} paid` : ''}</p>
+    <p class="hint center">Tap a day: came → didn’t come → double → back to usual.</p>
+    ${m.due > 0 ? `<button class="btn coral wide" data-action="svc-pay" data-id="${v.id}" data-ym="${ym}">Pay ${rupees(m.due)} for ${esc(Mo.monthName(ym))}</button>` : ''}`;
+}
+const drawSvcCal = () => { const box = $('#svc-cal'); const v = svcCal && s.services.find((x) => x.id === svcCal.id); if (box && v) box.innerHTML = svcCalHtml(v, svcCal.ym); };
+
+function serviceSheet(id, kind = 'milk') {
+  const base = Mo.SERVICE_KINDS[kind] || Mo.SERVICE_KINDS.other;
+  const v = id ? s.services.find((x) => x.id === id) : { kind, name: base.label, per: base.per, qty: base.qty, unit: base.unit, rate: base.rate, days: 'daily', upi: '', phone: '' };
+  if (!v) return;
+  svcCal = id ? { id, ym: thisYm() } : null;
+  const on = (d) => v.days === 'daily' || v.days.includes(String(d));
+  openSheet(`
+    <h2 class="sheet-title big">${id ? esc(v.name) : 'Add daily help'}</h2>
+    ${id ? `<div id="svc-cal" class="svc-cal">${svcCalHtml(v, svcCal.ym)}</div>` : ''}
+    <form data-form="service" ${id ? `data-id="${id}"` : ''} class="stack">
+      ${id ? '<h3 class="sec">Details</h3>' : ''}
+      <div class="chips" role="radiogroup" aria-label="What kind">${Object.entries(Mo.SERVICE_KINDS).map(([k, x]) => `<label class="chip toggle"><input type="radio" name="kind" value="${k}" ${v.kind === k ? 'checked' : ''}>${x.emoji} ${x.label}</label>`).join('')}</div>
+      <label class="field">Name<input name="name" value="${esc(v.name)}" maxlength="30" placeholder="Raju milk" required></label>
+      <div class="field">How it’s charged<div class="chips">
+        <label class="chip toggle"><input type="radio" name="per" value="unit" ${v.per === 'unit' ? 'checked' : ''}>By quantity</label>
+        <label class="chip toggle"><input type="radio" name="per" value="day" ${v.per === 'day' ? 'checked' : ''}>Per day it comes</label>
+        <label class="chip toggle"><input type="radio" name="per" value="month" ${v.per === 'month' ? 'checked' : ''}>Fixed each month</label>
+      </div></div>
+      <div class="two svc-qty">
+        <label class="field">Usual amount<input name="qty" inputmode="decimal" value="${+v.qty || 1}"></label>
+        <label class="field">Unit<input name="unit" value="${esc(v.unit || '')}" maxlength="8" placeholder="L, packet, can"></label>
+      </div>
+      <label class="field"><span class="svc-rate-l">Rate ₹</span><input name="rate" inputmode="decimal" value="${v.rate || ''}" placeholder="56" required></label>
+      <div class="field">Comes on<div class="chips wd-chips">${Mo.WEEKDAYS.map((w, d) => `<label class="chip toggle"><input type="checkbox" name="wd" value="${d}" ${on(d) ? 'checked' : ''}>${w}</label>`).join('')}</div></div>
+      <label class="field"><span>UPI ID <span class="opt">to pay from Homzy</span></span><input name="upi" value="${esc(v.upi || '')}" placeholder="raju@okaxis or 98xxxxxxxx@ybl" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label class="field"><span>Phone <span class="opt">optional</span></span><input name="phone" type="tel" value="${esc(v.phone || '')}" maxlength="15"></label>
+      <p class="form-err" id="form-err" hidden></p>
+      <button class="btn coral wide">${id ? 'Save' : 'Add'}</button>
+    </form>
+    ${id ? `<button class="btn ghost wide danger" data-action="svc-remove" data-id="${id}">${I.trash} Remove ${esc(v.name)}</button>` : ''}`, {
+    tall: true,
+    onMount: (sh) => {
+      const form = sh.querySelector('[data-form="service"]');
+      const sync = () => {
+        const per = form.per.value;
+        form.querySelector('.svc-qty').hidden = per !== 'unit';
+        sh.querySelector('.svc-rate-l').textContent = per === 'month' ? 'Each month ₹' : per === 'day' ? 'Per day ₹' : `Per ${form.unit.value || 'unit'} ₹`;
+      };
+      form.addEventListener('change', (e) => {
+        // A new service: picking a kind fills in its usual name, charge and rate.
+        if (!id && e.target.name === 'kind') {
+          const k = Mo.SERVICE_KINDS[e.target.value];
+          form.name.value = k.label; form.unit.value = k.unit; form.qty.value = k.qty; form.rate.value = k.rate || '';
+          form.querySelector(`[name="per"][value="${k.per}"]`).checked = true;
+        }
+        sync();
+      });
+      form.addEventListener('input', sync);
+      sync();
+    },
+    onClose: () => { svcCal = null; },
+  });
+}
+
+// ----- Bills sheet -----
+function dueSheet(id, kind = 'electricity') {
+  const base = Mo.DUE_KINDS[kind] || Mo.DUE_KINDS.other;
+  const b = id ? s.dues.find((x) => x.id === id) : { kind, name: base.label, every: base.every, amount: '', due: addDays(today(), 7), remind: 3, upi: '', account: '', history: [] };
+  if (!b) return;
+  const gas = b.every === 'gas';
+  const pays = id ? s.payments.filter((p) => p.ref === id).sort((x, y) => y.date.localeCompare(x.date)).slice(0, 5) : [];
+  openSheet(`
+    <h2 class="sheet-title big">${id ? esc(b.name) : 'Add a bill or renewal'}</h2>
+    ${id && gas ? `<p class="sub">${b.history.length ? `Last cylinder came ${whenTxt(b.history[b.history.length - 1])}. Usually lasts about ${Mo.gasGap(b.history)} days.` : 'Tap Delivered when a cylinder comes, so Homzy learns how long one lasts.'}</p>` : ''}
+    <form data-form="due" ${id ? `data-id="${id}"` : ''} class="stack">
+      <div class="chips" role="radiogroup" aria-label="What kind">${Object.entries(Mo.DUE_KINDS).map(([k, x]) => `<label class="chip toggle"><input type="radio" name="kind" value="${k}" ${b.kind === k ? 'checked' : ''}>${x.emoji} ${x.label}</label>`).join('')}</div>
+      <label class="field">Name<input name="name" value="${esc(b.name)}" maxlength="30" required></label>
+      <div class="two">
+        <label class="field"><span>Amount ₹ <span class="opt">if fixed</span></span><input name="amount" inputmode="decimal" value="${b.amount || ''}" placeholder="Varies"></label>
+        <label class="field">Repeats<select name="every">${Object.entries(Mo.EVERY).map(([k, v]) => `<option value="${k}" ${b.every === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      </div>
+      <div class="two">
+        <label class="field"><span class="due-l">${gas ? 'Last cylinder came on' : 'Next due date'}</span><input type="date" name="due" value="${gas ? (b.history[b.history.length - 1] || today()) : b.due}"></label>
+        <label class="field">Remind me<select name="remind">${[0, 1, 2, 3, 5, 7].map((n) => `<option value="${n}" ${+b.remind === n ? 'selected' : ''}>${n ? `${plural(n, 'day')} before` : 'On the day'}</option>`).join('')}</select></label>
+      </div>
+      <label class="field"><span>Consumer / account no. <span class="opt">optional</span></span><input name="account" value="${esc(b.account || '')}" maxlength="40" autocomplete="off"></label>
+      <label class="field"><span>UPI ID <span class="opt">optional, to pay from Homzy</span></span><input name="upi" value="${esc(b.upi || '')}" placeholder="landlord@okhdfcbank" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <p class="form-err" id="form-err" hidden></p>
+      <button class="btn coral wide">${id ? 'Save' : 'Add'}</button>
+    </form>
+    ${pays.length ? `<h3 class="sec">Paid before</h3><ul class="card rows">${pays.map((p) => `<li class="row"><span class="row-main static"><b>${esc(dayName(p.date))}</b><span class="meta">${p.via === 'upi' ? 'UPI' : p.via === 'cash' ? 'Cash' : 'Other'}</span></span><b class="amount">${rupees(p.amount)}</b></li>`).join('')}</ul>` : ''}
+    ${id ? `<button class="btn ghost wide danger" data-action="due-remove" data-id="${id}">${I.trash} Remove ${esc(b.name)}</button>` : ''}`, {
+    tall: true,
+    onMount: (sh) => {
+      const form = sh.querySelector('[data-form="due"]');
+      form.addEventListener('change', (e) => {
+        if (!id && e.target.name === 'kind') {
+          const k = Mo.DUE_KINDS[e.target.value];
+          form.name.value = k.label; form.every.value = k.every;
+        }
+        sh.querySelector('.due-l').textContent = form.every.value === 'gas' ? 'Last cylinder came on' : 'Next due date';
+      });
+    },
+  });
+}
+
+// ----- Ordering: send the list to the family's shop, or open a delivery app -----
+const DELIVERY_APPS = [
+  ['Blinkit', 'https://blinkit.com/'], ['Swiggy Instamart', 'https://www.swiggy.com/instamart'],
+  ['Zepto', 'https://www.zeptonow.com/'], ['BigBasket', 'https://www.bigbasket.com/'],
+];
+const orderItems = () => sortItems(s.items.filter((i) => i.status !== 'claimed'));
+function orderSheet() {
+  const items = orderItems();
+  const text = Mo.orderText(items, { home: s.home.name });
+  openSheet(`
+    <h2 class="sheet-title big">Order ${plural(items.length, 'item')}</h2>
+    <pre class="order-text">${esc(text)}</pre>
+    ${section('Your shops')}
+    ${s.shops.length ? `<ul class="card rows">${s.shops.map((sh) => `<li class="row">${bubble('🏪', 'other')}
+      <span class="row-main static"><b>${esc(sh.name)}</b><span class="meta">${esc(sh.phone)}</span></span>
+      <button class="pill coral" data-action="order-wa" data-id="${sh.id}">${I.send} WhatsApp</button>
+      ${delBtn('shop-remove', sh.id, sh.name)}</li>`).join('')}</ul>` : '<p class="note plain">Add the kirana or supermarket you order from. Homzy sends them the list on WhatsApp in one tap.</p>'}
+    <form data-form="shop" class="two add-shop">
+      <input name="name" placeholder="Shop name" maxlength="30" aria-label="Shop name" required>
+      <input name="phone" type="tel" inputmode="tel" placeholder="WhatsApp number" maxlength="15" aria-label="Shop WhatsApp number" required>
+      <button class="btn sage">Add shop</button>
+    </form>
+    <div class="btn-row">
+      <button class="btn ghost" data-action="order-share">${I.share} Share</button>
+      <button class="btn ghost" data-action="order-copy">${I.copy} Copy list</button>
+    </div>
+    ${section('Delivery apps')}
+    <p class="hint">Homzy copies the list, then opens the app. Paste or search the items there.</p>
+    <div class="chips">${DELIVERY_APPS.map(([n, url]) => `<button class="chip" data-action="order-app" data-url="${url}">${esc(n)}</button>`).join('')}</div>
+    <p class="note plain small">Items stay on your list. When the order comes, tick them bought, or scan the bill to save the spend and fill your stock.</p>`, { tall: true });
+}
+const copyText = async (text) => { try { await navigator.clipboard.writeText(text); return true; } catch { return false; } };
+
+// ----- Morning reminders (web push) -----
+const pushReady = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+const fromB64 = (str) => {
+  const s64 = (str + '='.repeat((4 - (str.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/');
+  return Uint8Array.from(atob(s64), (c) => c.charCodeAt(0));
+};
+async function pushSub() {
+  if (!pushReady()) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+
+function remindersSheet() {
+  const on = pref('reminders', 'off') === 'on';
+  const why = !pushReady()
+    ? (isIos() ? 'On iPhone, reminders work once Homzy is on your Home Screen: tap Share, then “Add to Home Screen”, and open Homzy from there.' : 'This browser can’t show reminders. Try Chrome on your phone.')
+    : '';
+  openSheet(`
+    <h2 class="sheet-title big center">Morning reminders</h2>
+    <p class="sub center">One notification at about 7:30 am, only on days something needs doing: a bill due, gas to book, or daily help to pay at the start of the month.</p>
+    ${why ? `<p class="note">${esc(why)}</p>`
+      : on ? `<p class="note plain center">${I.check} Reminders are on for this phone.</p><button class="btn ghost wide" id="remind-btn" data-action="remind-off">Turn off on this phone</button>`
+      : `${S.linked() ? '' : '<p class="note plain">Reminders are sent from Homzy’s server, so your home is saved online first (the same as sharing with family). Only phones you connect can open it.</p>'}
+        <button class="btn coral wide" id="remind-btn" data-action="remind-on">${I.bell} Turn on reminders</button>`}
+    <p class="form-err" id="form-err" hidden></p>`);
+}
+
+async function remindersOn() {
+  try {
+    await busy('remind-btn', 'Turning on…', async () => {
+      await C.config();
+      if (!C.configured() || !C.pushKey()) throw new Error('Reminders aren’t set up on this site yet.');
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') throw new Error('Notifications are blocked. Allow them for Homzy in your phone’s settings, then try again.');
+      if (!S.linked()) await goOnline();
+      const reg = await navigator.serviceWorker.ready;
+      const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64(C.pushKey()) }));
+      const j = sub.toJSON();
+      await C.rpc('save_push', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_member_id: s.me });
+    });
+    setPref('reminders', 'on');
+    closeSheet(); render();
+    toast('Reminders on. Homzy will tell you each morning when something is due.');
+  } catch (e) {
+    formError(e.message || 'Couldn’t turn on reminders. Try again.');
+  }
+}
+
+async function remindersOff() {
+  try {
+    await busy('remind-btn', 'Turning off…', async () => {
+      const sub = await pushSub();
+      if (sub) {
+        await C.rpc('delete_push', { p_endpoint: sub.endpoint }).catch(() => {});
+        await sub.unsubscribe();
+      }
+    });
+  } finally {
+    setPref('reminders', 'off');
+    closeSheet(); render();
+    toast('Reminders off on this phone');
+  }
+}
+
+// ----- Paying: open the family's UPI app, then ask if it went through -----
+let payCtx = null;      // what the pay sheet is for: { kind, ref, name, period, amount, upi, note }
+let pendingPay = null;  // a UPI app was opened for this: ask when they come back
+function paySheet(p) {
+  payCtx = p;
+  const link = Mo.upiLink({ vpa: p.upi, name: p.name, amount: p.amount, note: p.note });
+  openSheet(`
+    <h2 class="sheet-title big">Pay ${esc(p.name)}</h2>
+    ${p.note ? `<p class="sub">${esc(p.note)}</p>` : ''}
+    <label class="field">Amount ₹<input id="pay-amt" inputmode="decimal" value="${p.amount || ''}" placeholder="0"></label>
+    ${link ? `<button class="btn coral wide" data-action="pay-upi">${I.wallet} Pay with a UPI app</button>
+      <p class="hint center">Opens Google Pay, PhonePe, Paytm or BHIM with ${esc(p.upi)} and the amount filled in. You approve it there with your UPI PIN. Homzy never sees your money.</p>
+      <details class="pay-qr"><summary>Pay from another phone (QR code)</summary><div id="pay-qr" class="qr-box"></div></details>
+      <button class="link" data-action="pay-copy">${I.copy} Copy UPI ID</button>`
+    : `<p class="note">Add ${esc(p.name)}’s UPI ID (in their details) to pay from Homzy. You can still note a payment below.</p>`}
+    <div class="btn-row">
+      <button class="btn ghost" data-action="pay-mark" data-via="cash">Paid in cash</button>
+      <button class="btn ghost" data-action="pay-mark" data-via="other">Paid another way</button>
+    </div>`, {
+    onMount: (sh) => {
+      const qr = sh.querySelector('.pay-qr');
+      const drawQr = async () => {
+        if (!qr?.open) return;
+        const l = Mo.upiLink({ vpa: p.upi, name: p.name, amount: num($('#pay-amt')?.value), note: p.note });
+        $('#pay-qr').innerHTML = l ? await qrSvg(l) : '';
+      };
+      qr?.addEventListener('toggle', drawQr);
+      sh.querySelector('#pay-amt').addEventListener('input', drawQr);
+    },
+  });
+}
+const payAmount = () => { const n = num($('#pay-amt')?.value); return n > 0 ? n : payCtx?.amount || 0; };
+
+function recordPay(p, amount, via) {
+  if (!(amount > 0)) { $('#pay-amt')?.focus(); return toast('Enter the amount first'); }
+  closeSheet();
+  commit(`Paid ${rupees(amount)} to ${p.name}`, () => (p.kind === 'bill'
+    ? M.payDue(s, p.ref, { amount, via })
+    : M.recordPayment(s, { kind: 'service', ref: p.ref, name: p.name, period: p.period, amount, via })));
+  fx.haptic('success');
+}
+
+function paidCheckSheet(p) {
+  openSheet(`
+    <h2 class="sheet-title big center">Did ${rupees(p.amount)} go to ${esc(p.name)}?</h2>
+    <p class="sub center">Check your UPI app. Mark it paid only if the payment went through.</p>
+    <button class="btn coral wide" data-action="pay-done">Yes, it’s paid</button>
+    <button class="btn ghost wide" data-action="pay-not">Not yet</button>`);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !pendingPay || Date.now() - pendingPay.at < 1500) return;
+  const p = pendingPay;
+  setTimeout(() => paidCheckSheet(p), 250);
+});
+
+function svcPay(id, ym) {
+  const v = s.services.find((x) => x.id === id);
+  if (!v) return;
+  const m = M.serviceMonth(s, v, ym);
+  paySheet({ kind: 'service', ref: v.id, name: v.name, period: ym, amount: m.due, upi: v.upi, note: `${v.name} · ${Mo.monthName(ym)} · ${plural(m.came, 'day')}` });
+}
+function duePay(id) {
+  const b = s.dues.find((x) => x.id === id);
+  if (!b) return;
+  paySheet({ kind: 'bill', ref: b.id, name: b.name, period: b.due, amount: b.amount, upi: b.upi, note: [b.every === 'gas' ? 'Gas cylinder delivered' : `Due ${whenTxt(b.due)}`, b.account && `A/c ${b.account}`].filter(Boolean).join(' · ') });
+}
+
+const VIEWS = { home: homeView, plan: planView, kitchen: kitchenView, list: listView, money: moneyView, week: weekView, family: familyView };
 const TABS = Object.keys(VIEWS);
 
 // ---------- Sheets ----------
@@ -1808,7 +2208,7 @@ function reviewSheet({ items, total, shop }) {
 // joins by scanning a QR code made for them on the Family tab.
 const VIEW_OK = new Set(['tab', 'close-sheet', 'toast-action', 'switch', 'be', 'lang', 'step', 'list-mode', 'item', 'task', 'meal',
   'check-week', 'recipe', 'bills', 'week-prev', 'week-next', 'feedback', 'fb-snooze', 'settings', 'backup', 'install',
-  'wheel-step', 'wheel-to', 'wheel-spin', 'planned-list', 'planned-home', 'stock', 'hub']);
+  'wheel-step', 'wheel-to', 'wheel-spin', 'planned-list', 'planned-home', 'stock', 'hub', 'money-month', 'svc', 'svc-cal', 'due', 'reminders', 'remind-on', 'remind-off', 'remind-snooze']);
 const VIEW_FORMS = new Set(['feedback', 'settings']);
 const viewOnlyToast = () => toast('You can view this home but not change it. Ask the owner for edit access.');
 const ROLE = { owner: 'Owner', editor: 'Can edit', viewer: 'View only' };
@@ -2318,6 +2718,82 @@ const ACTIONS = {
   scan: () => { closeSheet(); photo.click(); },
   speak: () => speakSheet(),
   hub: () => ACTIONS.tab({ dataset: { tab: 'kitchen' } }),
+  // money
+  'money-month': (el) => {
+    const ym = Mo.addMonths(`${moneyYm || thisYm()}-01`, +el.dataset.d).slice(0, 7);
+    moneyYm = ym >= thisYm() ? null : ym;
+    enterNext = true; render();
+  },
+  'svc-new': (el) => serviceSheet(null, el.dataset.kind || 'milk'),
+  svc: (el) => serviceSheet(el.dataset.id),
+  'svc-cal': (el) => {
+    if (!svcCal) return;
+    const ym = Mo.addMonths(`${svcCal.ym}-01`, +el.dataset.d).slice(0, 7);
+    if (ym > thisYm()) return;
+    svcCal.ym = ym; drawSvcCal();
+  },
+  'svc-day': (el) => {
+    const v = s.services.find((x) => x.id === el.dataset.id);
+    if (!v) return;
+    const date = el.dataset.date, cur = s.svcLog[v.id]?.[date];
+    // Not a usual day: tap once for "came", again to clear.
+    const next = Mo.scheduled(v, date) ? Mo.nextDayState(v, cur) : cur == null ? +v.qty || 1 : null;
+    M.markService(s, v.id, date, next);
+    persist(); drawSvcCal();
+  },
+  'svc-today': (el) => {
+    const v = s.services.find((x) => x.id === el.dataset.id);
+    if (!v) return;
+    const came = el.dataset.q === '1';
+    commit(came ? null : `Noted: ${v.name} didn’t come today`, () => M.markService(s, v.id, today(), came ? +v.qty || 1 : 0));
+  },
+  'svc-pay': (el) => svcPay(el.dataset.id, el.dataset.ym || thisYm()),
+  'svc-remove': (el) => { closeSheet(); removeWithUndo('service', el.dataset.id); },
+  'due-new': (el) => dueSheet(null, el.dataset.kind || 'electricity'),
+  due: (el) => dueSheet(el.dataset.id),
+  'due-pay': (el) => duePay(el.dataset.id),
+  'due-remove': (el) => { closeSheet(); removeWithUndo('due', el.dataset.id); },
+  'gas-booked': (el) => commit('Gas booked. Tap Delivered when it comes.', () => M.gasBooked(s, el.dataset.id)),
+  'payment-remove': (el) => removeWithUndo('payment', el.dataset.id),
+  'pay-upi': () => {
+    const p = payCtx, amount = payAmount();
+    if (!p || !(amount > 0)) { $('#pay-amt')?.focus(); return toast('Enter the amount first'); }
+    const link = Mo.upiLink({ vpa: p.upi, name: p.name, amount, note: p.note });
+    if (!link) return;
+    pendingPay = { ...p, amount, at: Date.now() };
+    location.href = link;
+    // Desktop browsers have no UPI app: nothing happens, so point to the QR code.
+    setTimeout(() => { if (!document.hidden && pendingPay) { const q = $('.pay-qr'); if (q && !q.open) { q.open = true; toast('No UPI app here. Scan the QR code with your phone.'); } } }, 1800);
+  },
+  'pay-copy': async () => {
+    try { await navigator.clipboard.writeText(payCtx?.upi || ''); toast('UPI ID copied'); } catch { toast(payCtx?.upi || ''); }
+  },
+  'pay-mark': (el) => { const p = payCtx; if (p) recordPay(p, payAmount(), el.dataset.via || 'other'); },
+  'pay-done': () => { const p = pendingPay; pendingPay = null; if (p) recordPay(p, p.amount, 'upi'); },
+  'pay-not': () => { pendingPay = null; closeSheet(); },
+  order: () => orderSheet(),
+  reminders: () => remindersSheet(),
+  'remind-on': () => remindersOn(),
+  'remind-off': () => remindersOff(),
+  'remind-snooze': () => { setPref('remind-snooze', '1'); render(); },
+  'order-wa': (el) => {
+    const sh = s.shops.find((x) => x.id === el.dataset.id);
+    if (!sh) return;
+    const text = Mo.orderText(orderItems(), { home: s.home.name, shop: sh.name });
+    window.open(Mo.whatsappLink(sh.phone, text), '_blank', 'noopener');
+  },
+  'order-share': async () => {
+    const text = Mo.orderText(orderItems(), { home: s.home.name });
+    if (navigator.share) return navigator.share({ text }).catch(() => {});
+    toast(await copyText(text) ? 'List copied. Paste it anywhere.' : 'Couldn’t copy the list');
+  },
+  'order-copy': async () => toast(await copyText(Mo.orderText(orderItems(), { home: s.home.name })) ? 'List copied' : 'Couldn’t copy the list'),
+  'order-app': async (el) => {
+    await copyText(orderItems().map((i) => i.name + (i.qty != null ? ' ' + M.fmtQty(i.qty, i.unit) : '')).join(', '));
+    toast('List copied. Paste it in the app’s search.');
+    window.open(el.dataset.url, '_blank', 'noopener');
+  },
+  'shop-remove': (el) => removeWithUndo('shop', el.dataset.id, () => { if ($('.order-text')) orderSheet(); }),
   'speak-any': () => speakSheet(false, 'any'),
   'speak-stock': () => speakSheet(false, 'stock'),
   'scan-stock': () => { closeSheet(); photo.click(); },
@@ -2682,6 +3158,33 @@ const FORMS = {
     if (f.dataset.id) commit('Task updated', () => M.updateTask(s, f.dataset.id, data));
     else commit(!data.assignee ? 'Shared with everyone' : data.assignee === s.me ? 'Added to your day' : `Request sent to ${M.firstName(s, data.assignee)}`, () => M.addTask(s, data));
   },
+  shop: (f, d) => {
+    const digits = String(d.phone || '').replace(/\D/g, '');
+    if (digits.length < 10) { f.phone.focus(); return toast('Enter the shop’s 10-digit WhatsApp number'); }
+    commit(`Added ${d.name.trim() || 'the shop'}`, () => M.saveShop(s, d));
+    orderSheet();
+  },
+  service: (f, d) => {
+    const wd = new FormData(f).getAll('wd');
+    if (!wd.length) return formError('Pick at least one day it comes.');
+    if (d.upi.trim() && !Mo.validUpi(d.upi)) return formError('That UPI ID doesn’t look right. It looks like name@bank, e.g. raju@okaxis.');
+    const days = wd.length === 7 ? 'daily' : wd.sort().join('');
+    const id = f.dataset.id;
+    closeSheet();
+    commit(id ? 'Saved' : `Added ${d.name.trim() || 'daily help'}`, () => M.saveService(s, { ...d, days }, id));
+  },
+  due: (f, d) => {
+    if (d.upi.trim() && !Mo.validUpi(d.upi)) return formError('That UPI ID doesn’t look right. It looks like name@bank, e.g. landlord@okhdfcbank.');
+    const id = f.dataset.id;
+    closeSheet();
+    commit(id ? 'Saved' : `Added ${d.name.trim() || 'the bill'}`, () => {
+      const gas = d.every === 'gas';
+      const b = M.saveDue(s, gas ? { ...d, due: undefined } : d, id);
+      // Gas: the date given is when the last cylinder came.
+      if (gas && d.due && !b.history.includes(d.due)) M.gasDelivered(s, b.id, { date: d.due });
+      return b;
+    });
+  },
   'stock-add': (f, d) => {
     const items = parseSpeech(d.text || '');
     if (!items.length) return;
@@ -2903,7 +3406,8 @@ startSync();
 const shortcut = new URLSearchParams(location.search).get('do');
 if (shortcut && s.setup) {
   history.replaceState(null, '', location.pathname);
-  tab = 'kitchen'; setPref('tab', tab); render();
+  tab = shortcut === 'today' ? 'home' : 'kitchen'; setPref('tab', tab); render();
+  if (shortcut === 'today') setTimeout(() => $('.today-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
   if (shortcut === 'speak') speakSheet(false, 'any');
   if (shortcut === 'scan') openSheet(`<h2 class="sheet-title big">Scan a bill</h2><button class="btn coral wide" data-action="scan-stock">${I.camera} Take or choose a photo</button>`);
 }

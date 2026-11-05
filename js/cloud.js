@@ -28,7 +28,7 @@ export async function config() {
     const res = await fetch('/api/config', { cache: 'no-store' });
     if (res.ok) {
       const j = await res.json();
-      cfg = j.sync && j.url && j.key ? { url: j.url, key: j.key } : null;
+      cfg = j.sync && j.url && j.key ? { url: j.url, key: j.key, push: j.push || null } : null;
       write(CONFIG, cfg);
       cfgChecked = true;
     }
@@ -36,6 +36,8 @@ export async function config() {
   return cfg;
 }
 export const configured = () => !!cfg;
+/** The server's public key for phone reminders, or null when reminders aren't set up. */
+export const pushKey = () => cfg?.push || null;
 
 // ---------- Session ----------
 let session = read(SESSION); // { access_token, refresh_token, expires_at, user: { id, email } }
