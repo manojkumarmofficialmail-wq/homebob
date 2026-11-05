@@ -1,4 +1,4 @@
-/* Homzy design system (redesign v2)
+/* Homelu design system (redesign v2)
    Food-first: a sage-green home with a black dinner wheel of plate photos, warm paper pages,
    white cards, bold black type in Bricolage Grotesque, black pill buttons and sage accents.
    One spacing scale (4px steps), one type scale, colours checked for WCAG AA contrast in light
@@ -869,7 +869,7 @@ a.menu-row { text-decoration: none; color: inherit; }
 
 /* =====================================================================
    Redesign v2: the dinner wheel, dish page, "planned" moment, list cards,
-   week charts. Tokens and timings follow the Homzy motion & handoff kit.
+   week charts. Tokens and timings follow the Homelu motion & handoff kit.
    ===================================================================== */
 
 /* ---------- Type: Bricolage for titles and big numbers, Noto Sans for the rest ---------- */
@@ -1237,7 +1237,7 @@ main.entering .split .seg { animation: hz-grow-x .9s var(--ease-out) .5s both; t
 .kitchen-tab.on .fab { background: var(--accent-strong); color: var(--on-accent); }
 .kitchen-tab:focus-visible { outline-offset: -4px; }
 
-/* "Tell Homzy": the big voice card */
+/* "Tell Homelu": the big voice card */
 .k-mic {
   display: grid; grid-template-columns: auto 1fr; align-items: center; gap: var(--sp-4); width: 100%; text-align: left;
   padding: var(--sp-4) var(--sp-5) var(--sp-4) var(--sp-4); border-radius: var(--r-xl);
@@ -1795,7 +1795,7 @@ main.entering .fold:nth-of-type(n+4), main.entering .week-row { animation-delay:
 .scan-line { position: absolute; left: 10%; right: 10%; height: 3px; border-radius: 3px; background: var(--sage-lt); box-shadow: 0 0 18px 6px rgb(169 196 138 / 60%); }
 .scan-label { font-size: 14px; font-weight: 700; color: var(--ok-ink); text-align: center; }
 
-/* Tell Homzy */
+/* Tell Homelu */
 .orb-wrap { display: grid; place-items: center; margin-top: 4px; }
 .orb { position: relative; width: 112px; height: 112px; border-radius: 50%; }
 .orb-ring { position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--hz-sage); opacity: 0; }

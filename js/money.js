@@ -180,7 +180,7 @@ const fmt = (qty, unit) => {
 /** The shopping list as a message for the shop. */
 export function orderText(items, { home, shop } = {}) {
   const lines = items.map((i, n) => `${n + 1}. ${i.name}${i.qty != null ? ` – ${fmt(i.qty, i.unit)}` : ''}${i.note ? ` (${i.note})` : ''}`);
-  return [`${shop ? `Hello ${shop}, ` : 'Hello, '}please send:`, '', ...lines, '', `– ${home || 'Homzy'}${'\n'}(sent from Homzy)`].join('\n');
+  return [`${shop ? `Hello ${shop}, ` : 'Hello, '}please send:`, '', ...lines, '', `– ${home || 'Homelu'}${'\n'}(sent from Homelu)`].join('\n');
 }
 /** A WhatsApp link to one shop's number (10-digit Indian numbers get +91). */
 export function whatsappLink(phone, text) {
@@ -213,5 +213,5 @@ export function digest(home, today) {
     }
   }
   if (!parts.length) return null;
-  return { title: parts.length === 1 ? 'Homzy: 1 thing today' : `Homzy: ${parts.length} things today`, body: parts.slice(0, 4).join(' · ') + (parts.length > 4 ? ` · +${parts.length - 4} more` : ''), count: parts.length };
+  return { title: parts.length === 1 ? 'Homelu: 1 thing today' : `Homelu: ${parts.length} things today`, body: parts.slice(0, 4).join(' · ') + (parts.length > 4 ? ` · +${parts.length - 4} more` : ''), count: parts.length };
 }

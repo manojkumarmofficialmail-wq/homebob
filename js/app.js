@@ -181,7 +181,7 @@ function render() {
   try { n ? navigator.setAppBadge?.(n) : navigator.clearAppBadge?.(); } catch { /* unsupported */ }
 }
 
-const meBtn = () => `<button class="me-btn" data-action="tab" data-tab="family" aria-label="Family and settings (using Homzy as ${esc(me()?.name)})">${avatar(me())}</button>`;
+const meBtn = () => `<button class="me-btn" data-action="tab" data-tab="family" aria-label="Family and settings (using Homelu as ${esc(me()?.name)})">${avatar(me())}</button>`;
 const head = (title, sub) => `
   <header class="page-head">
     <div class="ph-text"><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ''}</div>
@@ -250,7 +250,7 @@ function setupView() {
   if (setupStep === 0) {
     return `
       <div class="welcome">
-        <p class="brand-word">Homzy<span>.</span></p>
+        <p class="brand-word">Homelu<span>.</span></p>
         <div class="welcome-plate" aria-hidden="true">
           <i class="steam"></i><i class="steam"></i><i class="steam"></i>
           <span class="bob"><img class="plate-img spin-in" src="img/dishes/chapati.webp" alt="" decoding="async"></span>
@@ -263,7 +263,7 @@ function setupView() {
   if (setupStep === 1) {
     return `
       <div class="setup">
-        <p class="brand-mark">${I.home}<span>Homzy</span></p>
+        <p class="brand-mark">${I.home}<span>Homelu</span></p>
         <h1 class="display">Set up your home</h1>
         <p class="sub">Step 1 of 2 · takes a minute</p>
         <form data-form="setup1" class="stack">
@@ -286,7 +286,7 @@ function setupView() {
           <button class="btn coral wide">Continue</button>
         </form>
         ${C.configured() ? `<div class="card info">
-          <b>Family already uses Homzy?</b>
+          <b>Family already uses Homelu?</b>
           <p>Ask them for your QR code (Family → Connect next to your name) and scan it with this phone’s camera.</p>
           <button class="btn ghost wide" data-action="sync-join-start">${I.qr} I have a QR code</button>
         </div>` : ''}
@@ -306,7 +306,7 @@ function setupView() {
           <button class="add-btn" aria-label="Add">${I.plus}</button>
         </form>
       </div>
-      <p class="note">Everyone can tap their name on this phone to claim shopping and accept tasks.${C.configured() ? ' To put Homzy on everyone’s own phone, tap your picture at the top, then Connect next to their name.' : ''}</p>
+      <p class="note">Everyone can tap their name on this phone to claim shopping and accept tasks.${C.configured() ? ' To put Homelu on everyone’s own phone, tap your picture at the top, then Connect next to their name.' : ''}</p>
       <button class="btn coral wide" data-action="setup-finish">Create our home</button>
     </div>`;
 }
@@ -470,7 +470,7 @@ function homeHelp() {
 function helpBody({ svcs, soon }) {
   const t = today();
   if (!svcs.length && !soon.length) {
-    return `<p class="fold-note">Add your milkman, maid, newspaper and bills in Money. Homzy asks here each day if they came.</p>
+    return `<p class="fold-note">Add your milkman, maid, newspaper and bills in Money. Homelu asks here each day if they came.</p>
       <button class="fold-link" data-action="tab" data-tab="money">Open Money ${I.chev}</button>`;
   }
   return `<ul class="joined">
@@ -527,7 +527,7 @@ function choresBody({ list }) {
     <button class="fold-link" data-action="task-new">${I.plus} Ask for a hand</button>`;
 }
 
-// Ask for feedback once the family has used Homzy for a couple of days.
+// Ask for feedback once the family has used Homelu for a couple of days.
 function feedbackPrompt() {
   const first = +pref('first-seen', 0);
   const snooze = +pref('fb-snooze', 0);
@@ -535,7 +535,7 @@ function feedbackPrompt() {
   return `
     <section class="card fb-card">
       <p class="eyebrow">${I.chat} Help us improve</p>
-      <b class="fb-q">How is Homzy working for your family?</b>
+      <b class="fb-q">How is Homelu working for your family?</b>
       <div class="faces">${FACES.map((f, i) => `<button class="face" data-action="feedback" data-rating="${i + 1}" aria-label="${FACE_LABELS[i]}">${f}</button>`).join('')}</div>
       <button class="link muted" data-action="fb-snooze">Not now</button>
     </section>`;
@@ -914,7 +914,7 @@ function weekView() {
         ${w.unknownMeals ? `<p class="hint">${plural(w.unknownMeals, 'meal has', 'meals have')} no ingredients yet, so ${w.unknownMeals === 1 ? 'it isn’t' : 'they aren’t'} counted. Add them in Family › Our meals.</p>` : ''}
         ${w.missing.length ? `<p class="hint">No nutrition data for: ${esc(w.missing.slice(0, 5).join(', '))}${w.missing.length > 5 ? '…' : ''}</p>` : ''}`
       : `<b class="wk-kcal">—</b>
-         <p class="meta">Plan meals or log food from outside. Homzy works out the nutrition from the ingredients.</p>
+         <p class="meta">Plan meals or log food from outside. Homelu works out the nutrition from the ingredients.</p>
          <button class="btn coral wide" data-action="tab" data-tab="plan">Plan meals</button>`}
     </section>
 
@@ -960,7 +960,7 @@ function kitchenView() {
     ${head('Kitchen')}
     <button class="tell" data-action="speak-any">
       <span class="tell-orb" aria-hidden="true"><i class="hz-ring"></i><i class="hz-ring" style="animation-delay:1s"></i><span>${I.mic}</span></span>
-      <b>Tell Homzy</b>
+      <b>Tell Homelu</b>
       <span class="tell-say">${esc(say)}</span>
     </button>
     <div class="k-two">
@@ -1010,7 +1010,7 @@ function jar(x, i, drain) {
 
 function stockBody(low, notListed) {
   if (!s.stock.length) {
-    return `<p class="fold-note">Scan this month’s grocery bill or say what you have. Homzy takes out what you cook and tells you what’s running low.</p>
+    return `<p class="fold-note">Scan this month’s grocery bill or say what you have. Homelu takes out what you cook and tells you what’s running low.</p>
       <div class="chips"><button class="chip" data-action="scan-stock">${I.receipt} Scan a bill</button><button class="chip" data-action="speak-stock">${I.mic} Say it</button><button class="chip" data-action="stock">${I.plus} Type it</button></div>`;
   }
   const drain = justOpened === 'stock';
@@ -1102,7 +1102,7 @@ function moneyView() {
           <span class="due-main">${initial(p.name)}<span><b>${esc(p.name)}</b><span class="meta">${rupees(p.amount)} · today</span></span></span>
           <span class="stamp ${justDone === p.ref ? 'hz-stamp' : ''}">PAID</span>
         </li>`).join('')}
-        ${!due.length && !paidToday.length ? `<li class="due-row"><span class="due-main">${initial('✓')}<span><b>Nothing due</b><span class="meta">${s.services.length || s.dues.length ? 'Homzy will show bills here before they’re due' : 'Add your milkman, maid and bills below'}</span></span></span></li>` : ''}
+        ${!due.length && !paidToday.length ? `<li class="due-row"><span class="due-main">${initial('✓')}<span><b>Nothing due</b><span class="meta">${s.services.length || s.dues.length ? 'Homelu will show bills here before they’re due' : 'Add your milkman, maid and bills below'}</span></span></span></li>` : ''}
       </ul>` : ''}
 
     ${fold('all', {
@@ -1124,7 +1124,7 @@ function moneyView() {
       body: () => pays.length ? `<ul class="fold-rows">${pays.slice(0, 20).map((p) => `<li class="fr row" data-id="${p.id}">
           <span class="fr-main"><b>${esc(p.name)}</b><span class="meta">${esc([dayName(p.date), p.via === 'upi' ? 'UPI' : p.via === 'cash' ? 'Cash' : 'Other', p.by !== s.me ? Who(p.by) : ''].filter(Boolean).join(' · '))}</span></span>
           <b class="amount">${rupees(p.amount)}</b>${delBtn('payment-remove', p.id, `${rupees(p.amount)} to ${p.name}`)}</li>`).join('')}</ul>`
-        : '<p class="fold-note">Payments you make from Homzy, or mark as paid, show here.</p>',
+        : '<p class="fold-note">Payments you make from Homelu, or mark as paid, show here.</p>',
     })}
 
     <button class="switch-card" role="switch" aria-checked="${remindOn}" data-action="remind-toggle">
@@ -1202,7 +1202,7 @@ function serviceSheet(id, kind = 'milk') {
       </div>
       <label class="field"><span class="svc-rate-l">Rate ₹</span><input name="rate" inputmode="decimal" value="${v.rate || ''}" placeholder="56" required></label>
       <div class="field">Comes on<div class="chips wd-chips">${Mo.WEEKDAYS.map((w, d) => `<label class="chip toggle"><input type="checkbox" name="wd" value="${d}" ${on(d) ? 'checked' : ''}>${w}</label>`).join('')}</div></div>
-      <label class="field"><span>UPI ID <span class="opt">to pay from Homzy</span></span><input name="upi" value="${esc(v.upi || '')}" placeholder="raju@okaxis or 98xxxxxxxx@ybl" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label class="field"><span>UPI ID <span class="opt">to pay from Homelu</span></span><input name="upi" value="${esc(v.upi || '')}" placeholder="raju@okaxis or 98xxxxxxxx@ybl" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <label class="field"><span>Phone <span class="opt">optional</span></span><input name="phone" type="tel" value="${esc(v.phone || '')}" maxlength="15"></label>
       <p class="form-err" id="form-err" hidden></p>
       <button class="btn coral wide">${id ? 'Save' : 'Add'}</button>
@@ -1248,7 +1248,7 @@ function dueSheet(id, kind = 'electricity') {
   const pays = id ? s.payments.filter((p) => p.ref === id).sort((x, y) => y.date.localeCompare(x.date)).slice(0, 5) : [];
   openSheet(`
     <h2 class="sheet-title big">${id ? esc(b.name) : 'Add a bill or renewal'}</h2>
-    ${id && gas ? `<p class="sub">${b.history.length ? `Last cylinder came ${whenTxt(b.history[b.history.length - 1])}. Usually lasts about ${Mo.gasGap(b.history)} days.` : 'Tap Delivered when a cylinder comes, so Homzy learns how long one lasts.'}</p>` : ''}
+    ${id && gas ? `<p class="sub">${b.history.length ? `Last cylinder came ${whenTxt(b.history[b.history.length - 1])}. Usually lasts about ${Mo.gasGap(b.history)} days.` : 'Tap Delivered when a cylinder comes, so Homelu learns how long one lasts.'}</p>` : ''}
     <form data-form="due" ${id ? `data-id="${id}"` : ''} class="stack">
       <div class="chips" role="radiogroup" aria-label="What kind">${Object.entries(Mo.DUE_KINDS).map(([k, x]) => `<label class="chip toggle"><input type="radio" name="kind" value="${k}" ${b.kind === k ? 'checked' : ''}>${x.emoji} ${x.label}</label>`).join('')}</div>
       <label class="field">Name<input name="name" value="${esc(b.name)}" maxlength="30" required></label>
@@ -1261,7 +1261,7 @@ function dueSheet(id, kind = 'electricity') {
         <label class="field">Remind me<select name="remind">${[0, 1, 2, 3, 5, 7].map((n) => `<option value="${n}" ${+b.remind === n ? 'selected' : ''}>${n ? `${plural(n, 'day')} before` : 'On the day'}</option>`).join('')}</select></label>
       </div>
       <label class="field"><span>Consumer / account no. <span class="opt">optional</span></span><input name="account" value="${esc(b.account || '')}" maxlength="40" autocomplete="off"></label>
-      <label class="field"><span>UPI ID <span class="opt">optional, to pay from Homzy</span></span><input name="upi" value="${esc(b.upi || '')}" placeholder="landlord@okhdfcbank" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label class="field"><span>UPI ID <span class="opt">optional, to pay from Homelu</span></span><input name="upi" value="${esc(b.upi || '')}" placeholder="landlord@okhdfcbank" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <p class="form-err" id="form-err" hidden></p>
       <button class="btn coral wide">${id ? 'Save' : 'Add'}</button>
     </form>
@@ -1296,7 +1296,7 @@ function orderSheet(keep) {
     <h2 class="sheet-title big">Send to your shop</h2>
     <div class="order-text" aria-label="Message">${lines.map((l, i) => `<div class="${keep ? '' : 'hz-rise'}" style="animation-delay:${250 + i * 120}ms">${esc(l) || '&nbsp;'}</div>`).join('')}</div>
     ${shop ? `<button class="btn coral wide send-btn" data-action="order-wa" data-id="${shop.id}"><span class="send-ico">${I.send}</span> WhatsApp ${esc(shop.name)}</button>`
-      : `<p class="fold-note">Add the kirana you order from. Homzy sends them this list on WhatsApp in one tap.</p>
+      : `<p class="fold-note">Add the kirana you order from. Homelu sends them this list on WhatsApp in one tap.</p>
         <form data-form="shop" class="two add-shop">
           <input name="name" placeholder="Shop name" maxlength="30" aria-label="Shop name" required>
           <input name="phone" type="tel" inputmode="tel" placeholder="WhatsApp number" maxlength="15" aria-label="Shop WhatsApp number" required>
@@ -1346,14 +1346,14 @@ async function pushSub() {
 function remindersSheet() {
   const on = pref('reminders', 'off') === 'on';
   const why = !pushReady()
-    ? (isIos() ? 'On iPhone, reminders work once Homzy is on your Home Screen: tap Share, then “Add to Home Screen”, and open Homzy from there.' : 'This browser can’t show reminders. Try Chrome on your phone.')
+    ? (isIos() ? 'On iPhone, reminders work once Homelu is on your Home Screen: tap Share, then “Add to Home Screen”, and open Homelu from there.' : 'This browser can’t show reminders. Try Chrome on your phone.')
     : '';
   openSheet(`
     <h2 class="sheet-title big center">Morning reminders</h2>
     <p class="sub center">One notification at about 7:30 am, only on days something needs doing: a bill due, gas to book, or daily help to pay at the start of the month.</p>
     ${why ? `<p class="note">${esc(why)}</p>`
       : on ? `<p class="note plain center">${I.check} Reminders are on for this phone.</p><button class="btn ghost wide" id="remind-btn" data-action="remind-off">Turn off on this phone</button>`
-      : `${S.linked() ? '' : '<p class="note plain">Reminders are sent from Homzy’s server, so your home is saved online first (the same as sharing with family). Only phones you connect can open it.</p>'}
+      : `${S.linked() ? '' : '<p class="note plain">Reminders are sent from Homelu’s server, so your home is saved online first (the same as sharing with family). Only phones you connect can open it.</p>'}
         <button class="btn coral wide" id="remind-btn" data-action="remind-on">${I.bell} Turn on reminders</button>`}
     <p class="form-err" id="form-err" hidden></p>`);
 }
@@ -1364,7 +1364,7 @@ async function remindersOn() {
       await C.config();
       if (!C.configured() || !C.pushKey()) throw new Error('Reminders aren’t set up on this site yet.');
       const perm = await Notification.requestPermission();
-      if (perm !== 'granted') throw new Error('Notifications are blocked. Allow them for Homzy in your phone’s settings, then try again.');
+      if (perm !== 'granted') throw new Error('Notifications are blocked. Allow them for Homelu in your phone’s settings, then try again.');
       if (!S.linked()) await goOnline();
       const reg = await navigator.serviceWorker.ready;
       const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64(C.pushKey()) }));
@@ -1373,7 +1373,7 @@ async function remindersOn() {
     });
     setPref('reminders', 'on');
     closeSheet(); render();
-    toast('Reminders on. Homzy will tell you each morning when something is due.');
+    toast('Reminders on. Homelu will tell you each morning when something is due.');
   } catch (e) {
     formError(e.message || 'Couldn’t turn on reminders. Try again.');
   }
@@ -1406,10 +1406,10 @@ function paySheet(p) {
     ${p.note ? `<p class="sub">${esc(p.note)}</p>` : ''}
     <label class="field">Amount ₹<input id="pay-amt" inputmode="decimal" value="${p.amount || ''}" placeholder="0"></label>
     ${link ? `<button class="btn coral wide" data-action="pay-upi">${I.wallet} Pay with a UPI app</button>
-      <p class="hint center">Opens Google Pay, PhonePe, Paytm or BHIM with ${esc(p.upi)} and the amount filled in. You approve it there with your UPI PIN. Homzy never sees your money.</p>
+      <p class="hint center">Opens Google Pay, PhonePe, Paytm or BHIM with ${esc(p.upi)} and the amount filled in. You approve it there with your UPI PIN. Homelu never sees your money.</p>
       <details class="pay-qr"><summary>Pay from another phone (QR code)</summary><div id="pay-qr" class="qr-box"></div></details>
       <button class="link" data-action="pay-copy">${I.copy} Copy UPI ID</button>`
-    : `<p class="note">Add ${esc(p.name)}’s UPI ID (in their details) to pay from Homzy. You can still note a payment below.</p>`}
+    : `<p class="note">Add ${esc(p.name)}’s UPI ID (in their details) to pay from Homelu. You can still note a payment below.</p>`}
     <div class="btn-row">
       <button class="btn ghost" data-action="pay-mark" data-via="cash">Paid in cash</button>
       <button class="btn ghost" data-action="pay-mark" data-via="other">Paid another way</button>
@@ -1469,7 +1469,7 @@ const TABS = Object.keys(VIEWS);
 // ---------- Sheets ----------
 function switchSheet() {
   openSheet(`
-    <h2 class="sheet-title">Who’s using Homzy?</h2>
+    <h2 class="sheet-title">Who’s using Homelu?</h2>
     <div class="who-grid">
       ${s.members.map((m) => `<button class="who ${m.id === s.me ? 'on' : ''}" data-action="be" data-id="${m.id}" data-close="1">${avatar(m, 'lg')}<span>${esc(m.name)}</span></button>`).join('')}
     </div>
@@ -1605,7 +1605,7 @@ function drawCheckSheet(keepOpen) {
         </li>`).join('')}
       </ul>
       ${unchecked.length ? `<p class="hint">Only items marked Need go on the list. ${unchecked.length === 1 ? '1 item isn’t' : `${unchecked.length} items aren’t`} checked yet.</p>` : ''}`
-    : `<p class="note">This meal has no ingredients yet. Add them once and Homzy remembers.</p>`}
+    : `<p class="note">This meal has no ingredients yet. Add them once and Homelu remembers.</p>`}
     ${after}
     ${cta}`;
   lastSwitch = null;
@@ -1939,7 +1939,7 @@ function outsideSheet(preset = {}) {
         <span class="hint">Light: idli, salad, soup. Heavy: biryani, fried food, pizza.</span>
       </div>
       <label class="field"><span>Place <span class="opt">optional</span></span><input name="place" value="${esc(preset.place || '')}" placeholder="Swiggy, Paragon, office canteen" maxlength="40"></label>
-      <p class="note plain">If a home meal was planned for the same meal, Homzy counts this one instead.</p>
+      <p class="note plain">If a home meal was planned for the same meal, Homelu counts this one instead.</p>
       <button class="btn coral wide">Save</button>
     </form>`, { tall: true });
 }
@@ -1948,7 +1948,7 @@ function outsideSheet(preset = {}) {
 function feedbackSheet(rating) {
   openSheet(`
     <h2 class="sheet-title big">Send feedback</h2>
-    <p class="sub">It goes straight to the Homzy team. We read every message.</p>
+    <p class="sub">It goes straight to the Homelu team. We read every message.</p>
     <form data-form="feedback" class="stack">
       <div class="field">How is it going?
         <div class="faces" role="radiogroup" aria-label="Rating">
@@ -1958,7 +1958,7 @@ function feedbackSheet(rating) {
       <div class="field">What is it about?
         <div class="chips">${Object.entries(FEEDBACK_KINDS).map(([k, v]) => `<label class="chip toggle"><input type="radio" name="kind" value="${k}" ${k === (rating && rating >= 4 ? 'praise' : 'idea') ? 'checked' : ''}>${v}</label>`).join('')}</div>
       </div>
-      <label class="field">Your message<textarea name="message" rows="5" maxlength="2000" required placeholder="What would make Homzy better for your home?" ${rating ? 'autofocus' : ''}></textarea></label>
+      <label class="field">Your message<textarea name="message" rows="5" maxlength="2000" required placeholder="What would make Homelu better for your home?" ${rating ? 'autofocus' : ''}></textarea></label>
       <label class="field"><span>Email or phone <span class="opt">optional, only if you want a reply</span></span><input name="contact" maxlength="120" autocomplete="email"></label>
       <input name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
       <p class="note plain">We receive your message, rating, app version and household size. Never your lists, meals or bills.</p>
@@ -2131,7 +2131,7 @@ let draft = [];          // items waiting in the review sheet: { k, name, qty, u
 let draftCarry = false;  // "Say more" from the review sheet adds to the same draft
 let draftMode = 'list';  // where the checked items go: 'list' or 'stock'
 let speakMode = 'list';  // what the speak sheet listens for: 'list', 'any' (Kitchen) or 'stock'
-const SPEAK_TITLE = { list: 'What do we need?', any: 'Tell Homzy', stock: 'What’s in the kitchen?' };
+const SPEAK_TITLE = { list: 'What do we need?', any: 'Tell Homelu', stock: 'What’s in the kitchen?' };
 const SPEAK_EXAMPLES = {
   list: null,
   any: ['“2 kg rice, 1 litre milk and 6 eggs”', '“Made fish curry with half kilo fish, 2 tomatoes”', '“Add 5 kg atta and 2 litre oil to stock”'],
@@ -2212,7 +2212,7 @@ function startListening() {
     onText: (text) => {
       if (!$('#heard')) return;
       showHeard(text);
-      // Show what Homzy understood so far, while they keep talking. New finds pop in.
+      // Show what Homelu understood so far, while they keep talking. New finds pop in.
       const items = parseSpeech(text);
       chips.innerHTML = items.map((x, i) => `<span class="found ${i >= found ? 'hz-pop' : ''}"><b>${esc(x.name)}</b>${x.qty != null ? `<span>${esc(M.fmtQty(x.qty, x.unit))}</span>` : ''}</span>`).join('');
       found = items.length;
@@ -2558,15 +2558,15 @@ const memberPhoneMeta = (m) => {
 
 function syncCard() {
   if (!C.configured()) {
-    return `<div class="card info"><b>Use Homzy on every phone</b>
+    return `<div class="card info"><b>Use Homelu on every phone</b>
       <p>Family sync isn’t switched on for this site yet. Until then, share the list on WhatsApp or use this phone together.</p></div>`;
   }
   const L = S.linked();
   if (!L) {
     return `<div class="card info">
-      <b>Use Homzy on everyone’s phone</b>
+      <b>Use Homelu on everyone’s phone</b>
       <p>${s.members.length > 1
-        ? 'Tap <b>Connect</b> next to a family member to show their QR code. They scan it with their phone camera and Homzy opens with your home. No email or password.'
+        ? 'Tap <b>Connect</b> next to a family member to show their QR code. They scan it with their phone camera and Homelu opens with your home. No email or password.'
         : 'Add a family member above, then tap <b>Connect</b> next to their name to show a QR code for their phone.'}</p>
     </div>`;
   }
@@ -2661,7 +2661,7 @@ async function showQr(code, name, role) {
   const link = joinLink(code);
   share = {
     link,
-    text: `${me()?.name || 'Your family'} added you to “${s.home.name}” on Homzy (${role === 'viewer' ? 'view only' : 'can edit'}).\n`
+    text: `${me()?.name || 'Your family'} added you to “${s.home.name}” on Homelu (${role === 'viewer' ? 'view only' : 'can edit'}).\n`
       + `Open this link on your phone:\n${link}\n\nCode: ${code}. It works once, for 7 days.`,
   };
   openSheet(`
@@ -2669,7 +2669,7 @@ async function showQr(code, name, role) {
     <p class="sub">${ROLE[role]} · works once, for 7 days</p>
     <div class="qr-box" role="img" aria-label="QR code for ${esc(name)}">${await qrSvg(link)}</div>
     <p class="code-box small" aria-label="Code ${code.split('').join(' ')}">${code.slice(0, 4)} ${code.slice(4)}</p>
-    <p class="note plain">On ${esc(name)}’s phone, open the camera and point it at this code, then tap the link. Or open Homzy there and type the code.</p>
+    <p class="note plain">On ${esc(name)}’s phone, open the camera and point it at this code, then tap the link. Or open Homelu there and type the code.</p>
     <button class="btn ghost wide" data-action="sync-share">${I.share} Send as a link instead</button>`,
   { tall: true, onClose: () => setTimeout(() => refreshPhones(true), 300) });
 }
@@ -2678,7 +2678,7 @@ async function showQr(code, name, role) {
 function joinSheet() {
   openSheet(`
     <h2 class="sheet-title big">Join your family’s home</h2>
-    <p class="sub">Ask whoever set up Homzy to open Family → Connect next to your name.</p>
+    <p class="sub">Ask whoever set up Homelu to open Family → Connect next to your name.</p>
     ${'BarcodeDetector' in window ? `<button class="btn coral wide" data-action="sync-scan">${I.camera} Scan the QR code</button>` : ''}
     <form data-form="sync-join" class="stack">
       <label class="field">Or type the code<input name="code" class="code-input" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" placeholder="K7MP 3QXA" required></label>
@@ -2692,7 +2692,7 @@ function joinHome(code) {
   if (S.linked()) return errorSheet('This phone is already connected to a home. Disconnect it under Family (your picture at the top) first.');
   if (s.setup) {
     return confirmSheet('Join your family’s home?',
-      `This phone already has its own Homzy home. Joining replaces it with your family’s home. <button type="button" class="link" data-action="backup">Download a backup first</button>`,
+      `This phone already has its own Homelu home. Joining replaces it with your family’s home. <button type="button" class="link" data-action="backup">Download a backup first</button>`,
       'Join', 'sync-join-yes', false, code);
   }
   doJoin(code);
@@ -2747,7 +2747,7 @@ async function scanQrPhoto(file) {
     const found = await new window.BarcodeDetector({ formats: ['qr_code'] }).detect(img);
     const text = found[0]?.rawValue || '';
     const code = cleanCode(text.match(/join=([A-Za-z0-9]+)/)?.[1] || text);
-    if (code.length !== 8) return formError('Couldn’t find a Homzy QR code in that photo. Try again, closer and in good light.');
+    if (code.length !== 8) return formError('Couldn’t find a Homelu QR code in that photo. Try again, closer and in good light.');
     joinHome(code);
   } catch {
     formError('Couldn’t read that photo. Type the code instead.');
@@ -3135,7 +3135,7 @@ const ACTIONS = {
   be: (el) => {
     whoFrom = s.members.findIndex((m) => m.id === s.me);
     s.me = el.dataset.id; persist();
-    toast(`Using Homzy as ${me().name}`);
+    toast(`Using Homelu as ${me().name}`);
     if (el.dataset.close) closeSheet();
   },
   lang: (el) => {
@@ -3321,7 +3321,7 @@ const ACTIONS = {
   'bill-remove': (el) => removeWithUndo('bill', el.dataset.id, () => { if (!$('#sheet-root').hidden) billsSheet(); }),
   backup: () => {
     const blob = new Blob([JSON.stringify(s, null, 1)], { type: 'application/json' });
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `homzy-backup-${today()}.json` });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `homelu-backup-${today()}.json` });
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     toast('Backup downloaded. Keep it private: it has your household data.');
@@ -3575,7 +3575,7 @@ $('#restore').addEventListener('change', async (e) => {
     const next = M.fromBackup(await file.text());
     commit('Backup restored', () => { s = next; });
   } catch {
-    toast('That file isn’t a Homzy backup.');
+    toast('That file isn’t a Homelu backup.');
   }
 });
 
@@ -3679,7 +3679,7 @@ ACTIONS.install = async () => {
   installEvent = null;
   document.body.classList.remove('can-install');
 };
-window.addEventListener('appinstalled', () => { document.body.classList.remove('can-install'); toast('Homzy is on your home screen'); });
+window.addEventListener('appinstalled', () => { document.body.classList.remove('can-install'); toast('Homelu is on your home screen'); });
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 /** Planned meals that have happened come out of stock (on phones that can edit). */
 function useCooked() {

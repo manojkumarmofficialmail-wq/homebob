@@ -1,7 +1,7 @@
 // Understanding what was said, and finding nutrition for new ingredients.
-// Homzy's own parser (parse.js) always goes first: it is free and works offline.
+// Homelu's own parser (parse.js) always goes first: it is free and works offline.
 // The AI helper (/api/understand) is only asked when the parser isn't sure, or for an
-// ingredient Homzy has no nutrition for. If it isn't set up or reachable, nothing breaks.
+// ingredient Homelu has no nutrition for. If it isn't set up or reachable, nothing breaks.
 import { understandLocal } from './parse.js';
 import { unknown, foodKey, cleanRow } from './nutrition.js';
 
@@ -40,7 +40,7 @@ export async function understand(text, lang, hint = null) {
 }
 
 /**
- * Look up nutrition for ingredient names Homzy doesn't know and save the estimates into
+ * Look up nutrition for ingredient names Homelu doesn't know and save the estimates into
  * `foods` (the home's s.foods). Returns how many were added. Each name is asked once per session.
  */
 export async function fillNutrition(foods, names) {

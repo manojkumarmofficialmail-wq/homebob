@@ -1,8 +1,8 @@
 {
-  "name": "homzy",
+  "name": "homelu",
   "version": "2.0.0",
   "private": true,
-  "description": "Homzy: meal plans, one shopping list, chores, daily help, bills, reminders and household money for Indian homes.",
+  "description": "Homelu: meal plans, one shopping list, chores, daily help, bills, reminders and household money for Indian homes.",
   "type": "module",
   "engines": {
     "node": ">=20"

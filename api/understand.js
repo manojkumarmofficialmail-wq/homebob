@@ -1,4 +1,4 @@
-// POST /api/understand — the AI helper, used only when Homzy's own parser isn't sure.
+// POST /api/understand — the AI helper, used only when Homelu's own parser isn't sure.
 // Two jobs:
 //   { task: 'speech', text, lang }  → { kind: 'items'|'dish'|'stock', name, items: [{ name, qty, unit }] }
 //   { task: 'nutrition', names }    → { foods: [{ name, v: [kcal, protein, carbs, fat, fibre, gPiece, gPacket] }] }

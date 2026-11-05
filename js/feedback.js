@@ -1,5 +1,5 @@
 // Sends feedback to /api/feedback. Messages wait on the phone when offline
-// and go out the next time Homzy is open with internet.
+// and go out the next time Homelu is open with internet.
 export const APP_VERSION = '2.0.0';
 
 const OUTBOX = 'homzy:feedback-outbox';

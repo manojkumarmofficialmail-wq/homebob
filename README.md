@@ -1,14 +1,14 @@
-# Homzy
+# Homelu
 
 Meal plans, one shared shopping list, chores, weekly family nutrition and food spend (groceries and food from outside) for Indian homes. It's an installable PWA with no build step.
 
 - **Household data** (lists, meals, bills, outside food) is kept on the phone, in `localStorage`, and works offline.
 - **Family sync** (optional, no email or password): under Family (tap your picture at the top), the owner taps **Connect** next to a family member and a QR code appears. That person scans it with their phone camera and their phone joins the home as **Can edit** or **View only**. Phones sync through Supabase every ~15 seconds while open, and merge changes made at the same time.
-- **Kitchen tab** (the round button in the middle of the tab bar): a big mic ("Tell Homzy") that understands shopping items, a new home dish, or stock; adding home dishes with a photo and live nutrition; and the kitchen **stock**, filled from scanned bills, used up by cooked meals, with "running low" items one tap from the list.
+- **Kitchen tab** (the round button in the middle of the tab bar): a big mic ("Tell Homelu") that understands shopping items, a new home dish, or stock; adding home dishes with a photo and live nutrition; and the kitchen **stock**, filled from scanned bills, used up by cooked meals, with "running low" items one tap from the list.
 - **Money tab**: this month's spend in one place (groceries, eating out, daily help, bills).
-  - **Daily help & deliveries** (milk, maid, newspaper, cook, water can): they're counted as coming on their usual days; tap a day to mark "didn't come" or "double". Homzy works out the month's amount.
+  - **Daily help & deliveries** (milk, maid, newspaper, cook, water can): they're counted as coming on their usual days; tap a day to mark "didn't come" or "double". Homelu works out the month's amount.
   - **Bills & renewals** (electricity, gas, recharge, rent, school fees, EMIs): due dates, reminders, and the next date set automatically when paid. Gas learns how long a cylinder lasts.
-  - **Pay with UPI**: opens Google Pay / PhonePe / Paytm / BHIM with the UPI ID and amount filled in (or a QR code on a computer). Homzy never handles money; it asks "did it go through?" when you come back, or you mark cash.
+  - **Pay with UPI**: opens Google Pay / PhonePe / Paytm / BHIM with the UPI ID and amount filled in (or a QR code on a computer). Homelu never handles money; it asks "did it go through?" when you come back, or you mark cash.
 - **Today card** on Home: only when something needs a tap (did the milk come, a bill due, gas to book).
 - **Order groceries** (List tab → Order): send the list to your kirana on WhatsApp in one tap, share it, or copy it and open Blinkit / Instamart / Zepto / BigBasket.
 - **Morning reminders** (optional): one phone notification a day when something is due, sent by `/api/remind` (a Vercel cron).
@@ -22,7 +22,7 @@ Meal plans, one shared shopping list, chores, weekly family nutrition and food s
 | `index.html`, `styles.css`, `js/` | The app (plain ES modules) |
 | `js/fx.js`, `js/emoji.js`, `js/wheel.js` | Motion helpers, food emoji for items and dishes, and the spinner sheet for other days and meals |
 | `js/photos.js`, `img/dishes/` | Plate photos for dishes (six stock photos) and a family's own dish photos (600px, gently brightened), kept on the phone and shared with the family through Supabase Storage |
-| `js/understand.js` | Voice understanding: Homzy's own parser first, the AI helper only when it isn't sure; nutrition lookups for new ingredients |
+| `js/understand.js` | Voice understanding: Homelu's own parser first, the AI helper only when it isn't sure; nutrition lookups for new ingredients |
 | `js/money.js` | Money maths shared by the app and the server: daily help months, due dates, gas, UPI links, order text, the morning digest |
 | `api/remind.js` | Daily cron: sends each subscribed phone its morning reminder (web push) |
 | `api/understand.js` | The AI helper (Google Gemini free tier): reads messy sentences and estimates nutrition for unknown ingredients |
@@ -80,7 +80,7 @@ Running `schema.sql` also creates the private **dish-photos** Storage bucket and
    - `SUPABASE_PUBLISHABLE_KEY` = your publishable key (turns on family sync)
    - `ALLOWED_ORIGINS` (optional) = e.g. `https://homzy.in` if you add a custom domain
    - Morning reminders (optional): run `npx web-push generate-vapid-keys` once and add `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (e.g. `mailto:you@example.com`) and `CRON_SECRET` (any long random text). `vercel.json` already schedules `/api/remind` daily at 02:00 UTC (7:30 am IST); on the free plan Vercel may run it any time within that hour.
-   - `GEMINI_API_KEY` (optional) = a free key from <https://aistudio.google.com/apikey>. Turns on the AI helper for long voice sentences and nutrition of new ingredients. Without it, everything still works with Homzy's own parser. `GEMINI_MODEL` (optional) picks the model; the default is `gemini-flash-latest`.
+   - `GEMINI_API_KEY` (optional) = a free key from <https://aistudio.google.com/apikey>. Turns on the AI helper for long voice sentences and nutrition of new ingredients. Without it, everything still works with Homelu's own parser. `GEMINI_MODEL` (optional) picks the model; the default is `gemini-flash-latest`.
 3. Deploy. To check it worked:
    - **Feedback:** open the app, go to **Family → Send feedback**, send a message, and look in Supabase **Table Editor → feedback**.
    - **Family sync:** add a family member under Family (your picture at the top), tap **Connect** next to their name, and scan the QR code with another phone's camera.
@@ -109,8 +109,8 @@ To change the questions, edit `js/survey-data.js`. Feature ids are stored with e
 ## How family sync works
 
 - **Roles:** the owner (the first phone to share the home) connects each person as **Can edit** or **View only**. Tapping **Connected** next to their name changes the role or disconnects their phone. View-only people see everything but every edit button is hidden, and the database refuses their writes anyway.
-- **QR codes** carry a link with an 8-character code. Each works once, for 7 days, and is tied to one family member, so their phone knows who they are. Without a camera app, they can type the code in Homzy ("I have a QR code").
-- **Phone accounts** are anonymous Supabase accounts kept on the phone. If a phone is reset or Homzy's data is cleared, make that person a new QR code. **The owner's phone holds the owner account**, so keep a backup (Family → Download a backup); a lost owner phone can't manage the others.
+- **QR codes** carry a link with an 8-character code. Each works once, for 7 days, and is tied to one family member, so their phone knows who they are. Without a camera app, they can type the code in Homelu ("I have a QR code").
+- **Phone accounts** are anonymous Supabase accounts kept on the phone. If a phone is reset or Homelu's data is cleared, make that person a new QR code. **The owner's phone holds the owner account**, so keep a backup (Family → Download a backup); a lost owner phone can't manage the others.
 - **One phone, one home.** Disconnecting or being disconnected removes the home from that phone. It stays online for everyone else.
 - **Same-time edits:** each save carries a revision number. If another phone saved first, this phone merges item by item (two people adding to the list both win; a delete beats an edit; if both changed the same field, the later save wins) and saves again.
 - **Deleting:** every list item, task, planned meal, bill and outside-food entry has a bin button (and list rows can be swiped left), with an Undo toast. No tombstones are needed: each phone keeps the last copy it agreed with the server, so the three-way merge sees "was there, now gone" as a delete and keeps it deleted even if another phone edited it at the same time (`tests/sync-delete.test.js` runs the real sync loop for two phones).
@@ -132,7 +132,7 @@ To change the questions, edit `js/survey-data.js`. Feature ids are stored with e
 - **Bills** move to their next date when paid: every 1/2/3/6/12 months (keeping the day, e.g. the 31st becomes the 28th in February) or every 28/56/84 days (recharges). A bill paid months late jumps to the first date after today.
 - **Gas**: tap Booked, then Delivered. The next "book by" date is the average gap between the last deliveries, minus 5 days.
 - **UPI**: some UPI apps refuse prefilled links to personal UPI IDs for safety. If that happens, use "Copy UPI ID" or mark the payment as cash or another way.
-- **Reminders** need the home saved online (the same as family sharing). Android Chrome works directly; iPhone needs Homzy added to the Home Screen first. One notification a day, only when something is due.
+- **Reminders** need the home saved online (the same as family sharing). Android Chrome works directly; iPhone needs Homelu added to the Home Screen first. One notification a day, only when something is due.
 
 ## How stock works
 
