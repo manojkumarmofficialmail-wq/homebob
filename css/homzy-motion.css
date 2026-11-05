@@ -1,0 +1,179 @@
+/* =========================================================
+   Homzy v2 — design tokens, motion and touch layer
+   Drop this file into the app and import it once globally.
+   Every class here is used by the reference screens in /reference.
+   ========================================================= */
+
+/* Fonts (Bricolage Grotesque + Noto Sans) are loaded in index.html. */
+
+/* ---------- Tokens ---------- */
+:root {
+  /* colour */
+  --hz-sage: #8aa765;        /* Home + splash + "done" background */
+  --hz-sage-lt: #a9c48a;     /* sage text on black */
+  --hz-green: #557330;       /* strong green: success, ticks, badges */
+  --hz-green-ink: #3f5a22;   /* green text on light */
+  --hz-green-tint: #dfe9cf;  /* "on the list", "accepted", ok chips */
+  --hz-ink: #111111;         /* text, primary buttons, wheel, hero cards */
+  --hz-paper: #f3f1ea;       /* page background (non-Home pages) */
+  --hz-cream: #f7f3e8;       /* cards on sage */
+  --hz-card: #ffffff;
+  --hz-chip: #ece8de;        /* secondary buttons, tracks */
+  --hz-line: #f0ede5;        /* row dividers */
+  --hz-muted: #5b5b55;       /* secondary text (passes 4.5:1 on paper) */
+  --hz-warn: #b13a0a;        /* "high", "running low" text */
+  --hz-warn-bar: #c2410c;
+  --hz-alert: #e66a2c;       /* small "needs you" dot */
+
+  /* type */
+  --hz-display: "Bricolage Grotesque", system-ui, sans-serif; /* 800, tight tracking */
+  --hz-body: "Noto Sans", system-ui, sans-serif;              /* covers ml / hi / ta */
+
+  /* shape */
+  --hz-r-card: 22px;
+  --hz-r-hero: 26px;
+  --hz-r-sheet: 30px;
+  --hz-r-pill: 999px;
+  --hz-tap: 44px;            /* minimum touch target */
+
+  /* motion */
+  --hz-ease-out: cubic-bezier(.2,.8,.2,1);
+  --hz-ease-spring: cubic-bezier(.3,1.4,.5,1);
+  --hz-ease-wheel: cubic-bezier(.17,.84,.22,1);
+  --hz-ease-sheet: cubic-bezier(.2,.9,.25,1);
+}
+
+
+/* ---------- Touch layer (every page) ---------- */
+button, a, label {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: scale .22s cubic-bezier(.3,1.6,.5,1), filter .2s ease;
+}
+button:active:not(.hz-no-press) { scale: .93; filter: brightness(.9); }   /* uses `scale`, so it never fights `transform` animations */
+a:active, label:active { scale: .97; filter: brightness(.95); }
+:focus-visible { outline: 3px solid var(--hz-green); outline-offset: 2px; }
+
+/* Ripple at the finger: absolutely-positioned at the pointer, removed after ~600ms (see README for the JS) */
+.hz-tapring { position: absolute; left: -36px; top: -36px; width: 72px; height: 72px; box-sizing: border-box; border-radius: 50%;
+  border: 2px solid rgba(17,17,17,.28);
+  background: radial-gradient(circle, rgba(255,255,255,.85) 0 26%, rgba(169,196,138,.55) 46%, rgba(169,196,138,0) 70%);
+  animation: hz-tapring .6s var(--hz-ease-out) both; pointer-events: none; }
+.hz-tapdot { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; box-sizing: border-box; border-radius: 50%;
+  background: var(--hz-green); border: 2px solid #fff; animation: hz-tapdot .5s ease-out both; pointer-events: none; }
+@keyframes hz-tapring { from { transform: scale(.15); opacity: 1 } to { transform: scale(1.5); opacity: 0 } }
+@keyframes hz-tapdot  { from { transform: scale(1); opacity: 1 } to { transform: scale(.2); opacity: 0 } }
+
+/* ---------- Shared entrances ---------- */
+.hz-screen { animation: hz-screen .5s var(--hz-ease-out) both; }   /* new page: fade + 24px from right */
+.hz-rise   { animation: hz-rise .55s var(--hz-ease-out) both; }    /* cards/rows: stagger 60–90ms with animation-delay */
+.hz-pop    { animation: hz-pop .5s var(--hz-ease-spring) both; }   /* chips, badges, result pills */
+.hz-fade   { animation: hz-fade .35s ease-out both; }
+.hz-sheet  { animation: hz-sheet .5s var(--hz-ease-sheet) both; }  /* bottom sheets */
+.hz-expand { transform-origin: 50% 0; animation: hz-expand .45s var(--hz-ease-out) both; } /* folded row opening */
+.hz-draw   { stroke-dasharray: 40; animation: hz-draw .45s .1s ease-out both; } /* tick drawn on an SVG path */
+@keyframes hz-screen { from { opacity: 0; transform: translateX(24px) } to { opacity: 1; transform: none } }
+@keyframes hz-rise   { from { opacity: 0; transform: translateY(14px) } to { opacity: 1; transform: none } }
+@keyframes hz-pop    { from { opacity: 0; transform: scale(.6) } to { opacity: 1; transform: scale(1) } }
+@keyframes hz-fade   { from { opacity: 0 } to { opacity: 1 } }
+@keyframes hz-sheet  { from { transform: translateY(100%) } to { transform: none } }
+@keyframes hz-expand { from { opacity: 0; transform: perspective(700px) rotateX(-24deg) translateY(-6px) } to { opacity: 1; transform: none } }
+@keyframes hz-draw   { from { stroke-dashoffset: 40 } to { stroke-dashoffset: 0 } }
+
+/* Folded-row chevron: rotate 0 → 180deg when open */
+.hz-chev { transition: transform .35s var(--hz-ease-spring); }
+.hz-chev[data-open="true"] { transform: rotate(180deg); }
+
+/* ---------- Page signatures ---------- */
+/* Home: dinner wheel (rotate disc, counter-rotate plates so they stay upright) */
+.hz-wheel { transition: transform 650ms var(--hz-ease-wheel); }            /* spin: 2600ms, 2 turns + random slot */
+.hz-wheel-plate { transition: transform 650ms var(--hz-ease-wheel); }      /* scale .85 → 1.45 when selected */
+.hz-slowspin { animation: hz-slowspin 18s linear infinite; }                /* dashed selection ring; 60s on dish photo */
+.hz-spinin { animation: hz-spinin .9s var(--hz-ease-out) both; }            /* plate rolls in on dish / splash / done */
+.hz-bob { animation: hz-bob 3.2s ease-in-out infinite; }
+.hz-steam { animation: hz-steam 2.4s ease-out infinite; }
+.hz-burst { animation: hz-burst 1.1s cubic-bezier(.1,.7,.3,1) both; }       /* 18 confetti pieces, rotated wrappers */
+.hz-ring { animation: hz-ring 1.6s ease-out infinite; }
+.hz-dotpulse { animation: hz-dotpulse 1.8s ease-in-out infinite; }          /* orange "needs you" dot */
+.hz-strike { transform-origin: left center; animation: hz-growx .35s ease-out both; } /* done chore line-through */
+@keyframes hz-slowspin { to { transform: rotate(360deg) } }
+@keyframes hz-spinin { from { opacity: 0; transform: translateX(140px) rotate(200deg) scale(.6) } to { opacity: 1; transform: none } }
+@keyframes hz-bob { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-10px) } }
+@keyframes hz-steam { 0% { opacity: 0; transform: translateY(8px) scaleY(.8) } 40% { opacity: .75 } 100% { opacity: 0; transform: translateY(-28px) scaleY(1.15) } }
+@keyframes hz-burst { 0% { opacity: 0; transform: translateY(0) scale(.3) } 12% { opacity: 1 } 100% { opacity: 0; transform: translateY(-140px) scale(1) rotate(220deg) } }
+@keyframes hz-ring { 0% { transform: scale(.7); opacity: .55 } 100% { transform: scale(2.1); opacity: 0 } }
+@keyframes hz-dotpulse { 0%,100% { transform: scale(1) } 50% { transform: scale(1.35) } }
+@keyframes hz-growx { from { transform: scaleX(0) } to { transform: scaleX(1) } }
+
+/* Plan: departures-board flip + coin plates + breathing empty day */
+.hz-flap { transform-origin: 50% 0; animation: hz-flap .7s cubic-bezier(.3,1.35,.5,1) both; } /* stagger 70ms per day */
+.hz-coin { animation: hz-coin .9s var(--hz-ease-out) both; }
+.hz-breathe { animation: hz-breathe 2.2s ease-in-out infinite; }
+.hz-toast { animation: hz-toast .5s cubic-bezier(.3,1.3,.5,1) both; }
+.hz-fill { transform-origin: left center; animation: hz-growx 1.6s cubic-bezier(.6,0,.3,1) both; }
+@keyframes hz-flap { 0% { opacity: 0; transform: perspective(700px) rotateX(-100deg) } 45% { opacity: 1 } 100% { opacity: 1; transform: perspective(700px) rotateX(0) } }
+@keyframes hz-coin { 0% { opacity: 0; transform: perspective(400px) rotateY(-540deg) scale(.5) } 100% { opacity: 1; transform: none } }
+@keyframes hz-breathe { 0%,100% { transform: scale(1); border-color: #c9c4b6 } 50% { transform: scale(1.1); border-color: var(--hz-green) } }
+@keyframes hz-toast { from { opacity: 0; transform: translateY(-120%) } to { opacity: 1; transform: none } }
+
+/* Kitchen: voice orb, waveform, scan line, draining jars, rolling plates */
+.hz-orb-ring { animation: hz-orb 2.1s ease-out infinite; }                  /* 2–3 rings, .7s apart */
+.hz-wave { transform-origin: center; animation: hz-wave .9s ease-in-out infinite alternate; } /* 18 bars, varied duration/delay */
+.hz-blink { animation: hz-blink 1s steps(2,end) infinite; }
+.hz-scanline { animation: hz-scanline 1.4s ease-in-out infinite alternate; }
+.hz-drain { transform-origin: top center; animation: hz-drain 1.6s cubic-bezier(.6,0,.3,1) both; } /* white "empty" overlay grows from top */
+.hz-roll { animation: hz-roll .9s var(--hz-ease-out) both; }
+.hz-breath { animation: hz-breath 2.4s ease-in-out infinite; }              /* active Kitchen tab button */
+@keyframes hz-orb { 0% { transform: scale(.9); opacity: .7 } 100% { transform: scale(2.2); opacity: 0 } }
+@keyframes hz-wave { from { transform: scaleY(.2) } to { transform: scaleY(1) } }
+@keyframes hz-blink { 0% { opacity: 1 } 100% { opacity: .2 } }
+@keyframes hz-scanline { from { top: 8% } to { top: 88% } }
+@keyframes hz-drain { from { transform: scaleY(0) } to { transform: scaleY(1) } }
+@keyframes hz-roll { from { opacity: 0; transform: translateX(140px) rotate(300deg) } to { opacity: 1; transform: none } }
+@keyframes hz-breath { 0%,100% { box-shadow: 0 0 0 0 rgba(138,167,101,0) } 50% { box-shadow: 0 0 0 10px rgba(138,167,101,.35) } }
+
+/* List: receipt printer, swipe-out on tick, paper plane */
+.hz-print { animation: hz-print .6s var(--hz-ease-out) both; }              /* stagger 110ms */
+.hz-leave { animation: hz-leave .65s cubic-bezier(.6,0,.4,1) both; }        /* then remove the row after 680ms */
+.hz-fly { animation: hz-fly .9s cubic-bezier(.5,0,.6,1) both; }
+.hz-slot { animation: hz-slot 1.2s ease-in-out infinite alternate; }
+@keyframes hz-print { from { clip-path: inset(0 0 100% 0); transform: translateY(-14px) } to { clip-path: inset(0 0 0 0); transform: none } }
+@keyframes hz-leave { 0%,35% { transform: none; opacity: 1 } 100% { transform: translateX(115%) rotate(4deg); opacity: 0 } }
+@keyframes hz-fly { 0% { transform: none; opacity: 1 } 100% { transform: translate(160px,-120px) rotate(18deg) scale(.6); opacity: 0 } }
+@keyframes hz-slot { from { opacity: .35 } to { opacity: 1 } }
+
+/* Money: stamp, calendar ripple + flip, due pulse, shine */
+.hz-stamp { animation: hz-stamp .55s cubic-bezier(.2,1.5,.4,1) both; }      /* "PAID" */
+.hz-cell { animation: hz-cell .45s var(--hz-ease-spring) both; }            /* delay = (row+col)*45ms */
+.hz-flipcell { animation: hz-flipcell .45s cubic-bezier(.3,1.3,.5,1) both; }
+.hz-due { animation: hz-due 1.8s ease-in-out infinite; }
+.hz-shine { animation: hz-shine 2.2s ease-in-out infinite; }
+@keyframes hz-stamp { 0% { opacity: 0; transform: rotate(-14deg) scale(2.6) } 100% { opacity: 1; transform: rotate(-14deg) scale(1) } }
+@keyframes hz-cell { 0% { opacity: 0; transform: scale(.3) translateY(10px) } 100% { opacity: 1; transform: none } }
+@keyframes hz-flipcell { 0% { transform: perspective(200px) rotateY(90deg) } 100% { transform: none } }
+@keyframes hz-due { 0%,100% { box-shadow: 0 0 0 0 rgba(85,115,48,0) } 50% { box-shadow: 0 0 0 6px rgba(85,115,48,.25) } }
+@keyframes hz-shine { 0% { transform: translateX(-120%) skewX(-20deg) } 60%,100% { transform: translateX(320%) skewX(-20deg) } }
+
+/* Week: bars pour + gloss, words fade in, day bars grow */
+.hz-pour { transform-origin: left center; animation: hz-growx 1.3s cubic-bezier(.3,1.25,.45,1) both; }
+.hz-gloss { animation: hz-gloss 2.6s ease-in-out infinite; }
+.hz-growy { transform-origin: center bottom; animation: hz-growy .9s cubic-bezier(.3,1.3,.5,1) both; }
+.hz-word { display: inline-block; animation: hz-word .4s ease-out both; }   /* 90ms per word */
+@keyframes hz-gloss { 0% { transform: translateX(-100%) } 60%,100% { transform: translateX(400%) } }
+@keyframes hz-growy { from { transform: scaleY(0) } to { transform: scaleY(1) } }
+@keyframes hz-word { from { opacity: 0; filter: blur(4px); transform: translateY(6px) } to { opacity: 1; filter: none; transform: none } }
+
+/* Family: avatars drop in, orbit ring slides to the selected person, star pop, timeline draws */
+.hz-drop { animation: hz-drop .8s cubic-bezier(.3,1.6,.5,1) both; }
+.hz-orbit { animation: hz-slowspin 6s linear infinite; }
+.hz-spin { animation: hz-slowspin .8s linear infinite; }
+.hz-star { animation: hz-star .5s cubic-bezier(.3,1.8,.5,1) both; }
+.hz-line { transform-origin: top center; animation: hz-growy-top 1.2s ease-out both; }
+@keyframes hz-drop { 0% { opacity: 0; transform: translateY(-60px) scale(.6) } 100% { opacity: 1; transform: none } }
+@keyframes hz-star { 0% { transform: scale(.3) rotate(-90deg) } 100% { transform: none } }
+@keyframes hz-growy-top { from { transform: scaleY(0) } to { transform: scaleY(1) } }
+
+/* ---------- Accessibility ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

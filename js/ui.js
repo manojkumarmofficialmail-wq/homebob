@@ -43,8 +43,7 @@ export const I = {
   cart: ico('<path d="M3 4h2.2l2.1 11h10.4l2-8H6.3"/><circle cx="9" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>'),
   arrow: ico('<path d="M5 12h14M13 6l6 6-6 6"/>'),
   up: ico('<path d="m6 15 6-6 6 6"/>'),
-  down: ico('<path d="m6 9 6 6 6-6"/>'),
-  spin: ico('<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/>'),
+  down: ico('<path d="m6 9 6 6 6-6"/>'),  spin: ico('<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/>'),
   receipt: ico('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
   keyboard: ico('<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/>'),
   hand: ico('<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11M11 10V4a1.5 1.5 0 0 1 3 0v7M14 10.5V6a1.5 1.5 0 0 1 3 0v8a7 7 0 0 1-7 7 6 6 0 0 1-5-2.7l-1.8-3a1.6 1.6 0 0 1 2.7-1.7L8 15"/>'),
@@ -91,11 +90,11 @@ const sheetRoot = () => $('#sheet-root');
 let cleanup = null;
 let pushed = false;
 
-export function openSheet(html, { onMount, onClose, tall } = {}) {
+export function openSheet(html, { onMount, onClose, tall, cls = '' } = {}) {
   closeSheet(true);
   const root = sheetRoot();
   root.innerHTML = `<div class="backdrop" data-action="close-sheet"></div>
-    <div class="sheet ${tall ? 'tall' : ''}" role="dialog" aria-modal="true">
+    <div class="sheet ${tall ? 'tall' : ''} ${cls}" role="dialog" aria-modal="true">
       <div class="grip"></div>${html}
     </div>`;
   root.hidden = false;
